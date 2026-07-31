@@ -4,3 +4,22 @@
 # GNOME tray support (log out/in after enabling):
 #   sudo apt install gnome-shell-extension-appindicator
 #   gnome-extensions enable appindicatorsupport@ubuntu.com
+#
+# Python packages (Ubuntu apt, recommended):
+#   sudo apt install python3-googleapi python3-google-auth-oauthlib
+#   or: make install-python-deps
+#
+# Python packages (pip alternative):
+#   sudo apt install python3-pip
+#   pip install -r requirements.txt
+#
+# Google Calendar setup:
+#   1. Create a project in Google Cloud Console
+#   2. Enable the Google Calendar API
+#   3. Create OAuth 2.0 credentials (Desktop app)
+#   4. Save as credentials.json in the project root
+#   5. On first run, complete the browser sign-in; token.json is saved locally
+
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0

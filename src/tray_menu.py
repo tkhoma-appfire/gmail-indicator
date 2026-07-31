@@ -22,15 +22,28 @@ class TrayMenu:
         return self._anchor
 
     def _on_menu_map(self, _menu: Gtk.Menu) -> None:
-        event = Gtk.get_current_event()
-        if event is None:
-            return
-
-        if event.type not in (Gdk.EventType.BUTTON_PRESS, Gdk.EventType.BUTTON_RELEASE):
-            return
-
-        if event.button == Gdk.BUTTON_PRIMARY:
+        display = Gdk.Display.get_default()
+        if display is None:
             GLib.idle_add(self._menu.popdown)
             return
 
-        self._anchor = (int(event.x_root), int(event.y_root))
+        seat = display.get_default_seat()
+        if seat is None:
+            GLib.idle_add(self._menu.popdown)
+            return
+
+        pointer = seat.get_pointer()
+        if pointer is None:
+            GLib.idle_add(self._menu.popdown)
+            return
+
+        _screen, x, y, mask = pointer.get_position()
+
+        is_right_click = mask & Gdk.ModifierType.BUTTON3_MASK
+        is_left_click = mask & Gdk.ModifierType.BUTTON1_MASK
+
+        if is_left_click and not is_right_click:
+            GLib.idle_add(self._menu.popdown)
+            return
+
+        self._anchor = (x, y)

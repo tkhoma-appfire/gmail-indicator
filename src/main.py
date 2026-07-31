@@ -19,14 +19,18 @@ except ValueError:
 
 from gi.repository import Gtk  # noqa: E402
 
+from google_calendar import GoogleCalendarClient
 from popup import Popup
 from tray_menu import TrayMenu
 
 APP_ID = "gmail-notification"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ICON_PATH = PROJECT_ROOT / "assets" / "icon.svg"
+CREDENTIALS_PATH = PROJECT_ROOT / "credentials.json"
+TOKEN_PATH = PROJECT_ROOT / "token.json"
 
-_popup = Popup()
+_calendar = GoogleCalendarClient(CREDENTIALS_PATH, TOKEN_PATH)
+_popup = Popup(_calendar)
 _tray_menu: TrayMenu | None = None
 
 
