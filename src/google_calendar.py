@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -27,18 +27,18 @@ class GoogleCalendarClient:
         self._credentials_path = credentials_path
         self._token_path = token_path
 
-    def get_upcoming_events(self, days: int = 7, max_results: int = 15) -> list[CalendarEvent]:
+    def get_todays_events(self, max_results: int = 50) -> list[CalendarEvent]:
         service = build("calendar", "v3", credentials=self._get_credentials())
-        now = datetime.now(timezone.utc)
-        time_min = now.isoformat()
-        time_max = (now + timedelta(days=days)).isoformat()
+        local_now = datetime.now().astimezone()
+        start_of_day = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day = start_of_day + timedelta(days=1)
 
         result = (
             service.events()
             .list(
                 calendarId="primary",
-                timeMin=time_min,
-                timeMax=time_max,
+                timeMin=start_of_day.isoformat(),
+                timeMax=end_of_day.isoformat(),
                 maxResults=max_results,
                 singleEvents=True,
                 orderBy="startTime",
@@ -48,10 +48,13 @@ class GoogleCalendarClient:
 
         events: list[CalendarEvent] = []
         for item in result.get("items", []):
+            when = _format_when(item)
+            if when is None:
+                continue
             events.append(
                 CalendarEvent(
                     summary=item.get("summary", "(No title)"),
-                    when=_format_when(item),
+                    when=when,
                 )
             )
         return events
@@ -121,16 +124,12 @@ def _load_credentials(path: Path) -> Credentials | None:
     return creds
 
 
-def _format_when(item: dict) -> str:
+def _format_when(item: dict) -> str | None:
     start = item.get("start", {})
-    raw = start.get("dateTime") or start.get("date")
+    raw = start.get("dateTime")
     if not raw:
-        return ""
+        return None
 
-    if "T" in raw:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        local = dt.astimezone()
-        return local.strftime("%a %b %d, %H:%M")
-
-    dt = datetime.fromisoformat(raw)
-    return dt.strftime("%a %b %d, All day")
+    dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    local = dt.astimezone()
+    return local.strftime("%-I:%M %p").lower()

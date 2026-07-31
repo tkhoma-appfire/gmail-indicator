@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import gi
@@ -12,11 +13,81 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, GLib, Gtk
 
 if TYPE_CHECKING:
-    from google_calendar import GoogleCalendarClient, CalendarEvent
+    from google_calendar import CalendarEvent, GoogleCalendarClient
 
 ICON_BELOW_OFFSET = 12
-POPUP_WIDTH = 320
-POPUP_MAX_HEIGHT = 400
+POPUP_WIDTH = 380
+POPUP_MAX_HEIGHT = 320
+
+_POPUP_CSS = b"""
+.popup-card {
+    background-color: #ffffff;
+    border-radius: 16px;
+    border: 1px solid #e0e0e0;
+}
+.popup-date {
+    color: #5f6368;
+    font-size: 12px;
+}
+.popup-title {
+    color: #202124;
+    font-size: 20px;
+    font-weight: bold;
+}
+.popup-close-icon-btn {
+    background-color: transparent;
+    border: none;
+    padding: 4px;
+    margin-top: 0;
+}
+.popup-close-icon {
+    color: #5f6368;
+    font-size: 16px;
+}
+.popup-separator {
+    background-color: #e8eaed;
+    min-height: 1px;
+    margin-top: 12px;
+    margin-bottom: 12px;
+}
+.event-row {
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.event-accent {
+    background-color: #1a73e8;
+    border-radius: 2px;
+    min-width: 4px;
+    min-height: 20px;
+}
+.event-time {
+    color: #5f6368;
+    font-size: 13px;
+    min-width: 72px;
+}
+.event-title {
+    color: #202124;
+    font-size: 13px;
+}
+.popup-message {
+    color: #5f6368;
+    font-size: 13px;
+    padding: 8px 0;
+}
+.popup-close-button {
+    background-color: #ffffff;
+    border: 1px solid #dadce0;
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin-top: 12px;
+    color: #202124;
+    font-size: 14px;
+}
+.popup-close-button:hover {
+    background-color: #f8f9fa;
+}
+"""
 
 
 class Popup:
@@ -25,6 +96,7 @@ class Popup:
         self._window: Gtk.Window | None = None
         self._overlay: Gtk.Window | None = None
         self._content_box: Gtk.Box | None = None
+        _ensure_popup_styles()
 
     @property
     def is_visible(self) -> bool:
@@ -48,33 +120,39 @@ class Popup:
         window.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
         window.set_can_focus(True)
         window.add_events(Gdk.EventMask.KEY_PRESS_MASK)
-        window.set_default_size(POPUP_WIDTH, -1)
+        window.set_default_size(POPUP_WIDTH, 80)
 
-        frame = Gtk.Frame()
-        frame.set_shadow_type(Gtk.ShadowType.OUT)
+        card = Gtk.EventBox()
+        card.get_style_context().add_class("popup-card")
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        outer.set_margin_top(12)
-        outer.set_margin_bottom(12)
-        outer.set_margin_start(16)
-        outer.set_margin_end(16)
+        outer.set_margin_top(20)
+        outer.set_margin_bottom(20)
+        outer.set_margin_start(20)
+        outer.set_margin_end(20)
 
-        title = Gtk.Label(label="Upcoming events")
-        title.set_xalign(0)
-        title.get_style_context().add_class("title")
-        outer.pack_start(title, False, False, 0)
+        outer.pack_start(self._build_header(), False, False, 0)
+
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        separator.get_style_context().add_class("popup-separator")
+        outer.pack_start(separator, False, False, 0)
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_max_content_height(POPUP_MAX_HEIGHT)
         scrolled.set_propagate_natural_height(True)
 
-        self._content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self._content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         scrolled.add(self._content_box)
         outer.pack_start(scrolled, True, True, 0)
 
-        frame.add(outer)
-        window.add(frame)
+        close_button = Gtk.Button(label="Close")
+        close_button.get_style_context().add_class("popup-close-button")
+        close_button.connect("clicked", lambda _btn: self.close())
+        outer.pack_start(close_button, False, False, 0)
+
+        card.add(outer)
+        window.add(card)
 
         window.connect("destroy", self._on_window_destroy)
         window.connect("key-press-event", self._on_key_press)
@@ -91,6 +169,34 @@ class Popup:
         GLib.idle_add(self._grab_keyboard)
         self._fetch_events_async()
 
+    def _build_header(self) -> Gtk.Widget:
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+
+        titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        local_now = datetime.now().astimezone()
+        date_label = Gtk.Label(label=local_now.strftime("%A, %B %-d"))
+        date_label.set_xalign(0)
+        date_label.get_style_context().add_class("popup-date")
+        titles.pack_start(date_label, False, False, 0)
+
+        title_label = Gtk.Label(label="Today's events")
+        title_label.set_xalign(0)
+        title_label.get_style_context().add_class("popup-title")
+        titles.pack_start(title_label, False, False, 0)
+
+        header.pack_start(titles, True, True, 0)
+
+        close_button = Gtk.Button()
+        close_button.set_relief(Gtk.ReliefStyle.NONE)
+        close_button.get_style_context().add_class("popup-close-icon-btn")
+        close_icon = Gtk.Label(label="✕")
+        close_icon.get_style_context().add_class("popup-close-icon")
+        close_button.add(close_icon)
+        close_button.connect("clicked", lambda _btn: self.close())
+        header.pack_start(close_button, False, False, 0)
+
+        return header
+
     def close(self) -> None:
         if self._window is not None:
             self._window.destroy()
@@ -105,7 +211,7 @@ class Popup:
 
     def _load_events(self) -> None:
         try:
-            events = self._calendar_client.get_upcoming_events()
+            events = self._calendar_client.get_todays_events()
             GLib.idle_add(self._show_events, events, None)
         except Exception as exc:
             GLib.idle_add(self._show_events, None, str(exc))
@@ -123,7 +229,7 @@ class Popup:
             return False
 
         if not events:
-            self._set_message("No upcoming events.")
+            self._set_message("No events today.")
             return False
 
         self._clear_content()
@@ -132,22 +238,29 @@ class Popup:
 
         self._content_box.show_all()
         if self._window is not None:
-            self._window.resize(POPUP_WIDTH, -1)
+            self._window.queue_resize()
         return False
 
     def _create_event_row(self, event: CalendarEvent) -> Gtk.Widget:
-        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row.get_style_context().add_class("event-row")
 
-        summary = Gtk.Label(label=event.summary)
-        summary.set_xalign(0)
-        summary.set_line_wrap(True)
-        summary.set_max_width_chars(36)
-        row.pack_start(summary, False, False, 0)
+        accent = Gtk.EventBox()
+        accent.get_style_context().add_class("event-accent")
+        row.pack_start(accent, False, False, 0)
 
-        when = Gtk.Label(label=event.when)
-        when.set_xalign(0)
-        when.get_style_context().add_class("dim-label")
-        row.pack_start(when, False, False, 0)
+        time_label = Gtk.Label(label=event.when)
+        time_label.set_xalign(0)
+        time_label.set_yalign(0.5)
+        time_label.get_style_context().add_class("event-time")
+        row.pack_start(time_label, False, False, 0)
+
+        title_label = Gtk.Label(label=event.summary)
+        title_label.set_xalign(0)
+        title_label.set_yalign(0.5)
+        title_label.set_line_wrap(True)
+        title_label.get_style_context().add_class("event-title")
+        row.pack_start(title_label, True, True, 0)
 
         return row
 
@@ -159,7 +272,7 @@ class Popup:
         label = Gtk.Label(label=text)
         label.set_xalign(0)
         label.set_line_wrap(True)
-        label.set_max_width_chars(36)
+        label.get_style_context().add_class("popup-message")
         self._content_box.pack_start(label, False, False, 0)
         self._content_box.show_all()
 
@@ -280,3 +393,25 @@ class Popup:
         cr.set_source_rgba(0, 0, 0, 0)
         cr.paint()
         return False
+
+
+_styles_loaded = False
+
+
+def _ensure_popup_styles() -> None:
+    global _styles_loaded
+    if _styles_loaded:
+        return
+
+    screen = Gdk.Screen.get_default()
+    if screen is None:
+        return
+
+    provider = Gtk.CssProvider()
+    provider.load_from_data(_POPUP_CSS)
+    Gtk.StyleContext.add_provider_for_screen(
+        screen,
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+    )
+    _styles_loaded = True
