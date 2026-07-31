@@ -14,6 +14,7 @@ A Python application that runs in the Ubuntu top bar using [AppIndicator](https:
 - Ubuntu (or another Linux desktop with AppIndicator support)
 - Python 3.10+
 - GTK 3 and Ayatana AppIndicator GObject bindings
+- Google Calendar API Python libraries
 - A Google Cloud project with the Calendar API enabled
 
 ## Installation
@@ -21,34 +22,27 @@ A Python application that runs in the Ubuntu top bar using [AppIndicator](https:
 Install system dependencies:
 
 ```bash
-make install-deps
-```
-
-Or manually:
-
-```bash
 sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1
 ```
 
-Install Python dependencies:
+Install Python dependencies (Ubuntu packages):
 
 ```bash
-make install-python-deps
+sudo apt install python3-googleapi python3-google-auth-oauthlib
 ```
 
-This uses Ubuntu packages (`python3-googleapi`, `python3-google-auth-oauthlib`) and does not require pip.
-
-Alternatively, if you prefer pip:
+Alternatively, with pip:
 
 ```bash
 sudo apt install python3-pip
-make install-python-deps-pip
+pip install -r requirements.txt
 ```
 
 On GNOME, tray icons are disabled by default. Enable the AppIndicator extension:
 
 ```bash
-make install-gnome-extension
+sudo apt install gnome-shell-extension-appindicator
+gnome-extensions enable appindicatorsupport@ubuntu.com
 ```
 
 Log out and back in after enabling the extension.
@@ -90,10 +84,6 @@ An envelope icon appears in the top bar.
 | Target | Description |
 |--------|-------------|
 | `make run` | Start the tray indicator |
-| `make install-deps` | Install required apt packages |
-| `make install-python-deps` | Install Python dependencies via apt |
-| `make install-python-deps-pip` | Install Python dependencies via pip |
-| `make install-gnome-extension` | Install and enable the GNOME tray extension |
 | `make check` | Verify Python/GObject dependencies |
 | `make clean` | Remove Python cache files |
 
@@ -126,10 +116,10 @@ gmail-notification/
 
 - Install `gir1.2-ayatanaappindicator3-0.1`. On Ubuntu 24.04 the library is exposed as `AyatanaAppIndicator3`; the app handles both old and new names automatically.
 
-**`python3: No module named pip`**
+**`No module named 'googleapiclient'` or `No module named 'google_auth_oauthlib'`**
 
-- On Ubuntu, use `make install-python-deps` instead — it installs packages via apt and does not need pip.
-- If you want pip: `sudo apt install python3-pip`, then `make install-python-deps-pip`.
+- Install the Google API packages: `sudo apt install python3-googleapi python3-google-auth-oauthlib`
+- Or use pip: `pip install -r requirements.txt`
 
 **Popup shows "Missing credentials.json"**
 
