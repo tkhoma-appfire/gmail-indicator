@@ -1,7 +1,7 @@
 .PHONY: help run install-deps install-gnome-extension check clean
 
 PYTHON ?= python3
-MAIN := main.py
+MAIN := src/main.py
 
 APT_PACKAGES := python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1
 GNOME_PACKAGES := gnome-shell-extension-appindicator

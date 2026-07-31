@@ -19,12 +19,39 @@ except ValueError:
 
 from gi.repository import Gtk  # noqa: E402
 
+from popup import Popup
+from tray_menu import TrayMenu
+
 APP_ID = "gmail-notification"
-ICON_PATH = Path(__file__).resolve().parent / "assets" / "icon.svg"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ICON_PATH = PROJECT_ROOT / "assets" / "icon.svg"
+
+_popup = Popup()
+_tray_menu: TrayMenu | None = None
+
+
+def _anchor_from_menu_item(menu_item: Gtk.MenuItem) -> tuple[int, int] | None:
+    widget: Gtk.Widget | None = menu_item
+    while widget is not None and not isinstance(widget, Gtk.Menu):
+        widget = widget.get_parent()
+
+    if not isinstance(widget, Gtk.Menu):
+        return None
+
+    gdk_window = widget.get_window()
+    if gdk_window is None:
+        return None
+
+    x, y = gdk_window.get_origin()
+    return (x + widget.get_allocated_width() // 2, y)
 
 
 def build_menu() -> Gtk.Menu:
     menu = Gtk.Menu()
+
+    popup_item = Gtk.MenuItem(label="Show popup")
+    popup_item.connect("activate", on_show_popup)
+    menu.append(popup_item)
 
     about_item = Gtk.MenuItem(label="About")
     about_item.connect("activate", on_about)
@@ -53,11 +80,25 @@ def on_about(_widget: Gtk.MenuItem) -> None:
     dialog.destroy()
 
 
+def on_show_popup(widget: Gtk.MenuItem) -> None:
+    parent = widget.get_parent()
+    if isinstance(parent, Gtk.Menu):
+        parent.popdown()
+
+    anchor = _tray_menu.get_anchor() if _tray_menu else None
+    if anchor is not None:
+        _popup.toggle(anchor=anchor, below_click=True)
+    else:
+        _popup.toggle(anchor=_anchor_from_menu_item(widget), below_click=False)
+
+
 def on_quit(_widget: Gtk.MenuItem) -> None:
     Gtk.main_quit()
 
 
 def main() -> None:
+    global _tray_menu
+
     indicator = AppIndicator3.Indicator.new(
         APP_ID,
         str(ICON_PATH),
@@ -65,7 +106,7 @@ def main() -> None:
     )
     indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
     indicator.set_title("Gmail Notification")
-    indicator.set_menu(build_menu())
+    _tray_menu = TrayMenu(indicator, build_menu())
 
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     Gtk.main()

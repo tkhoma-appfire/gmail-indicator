@@ -30,7 +30,13 @@ Log out and back in after enabling the extension.
 Run the application:
 
 ```bash
-python3 main.py
+make run
+```
+
+Or:
+
+```bash
+python3 src/main.py
 ```
 
 An envelope icon appears in the top bar. Right-click it to open the menu.
@@ -41,7 +47,10 @@ Quit with **Quit** from the menu or `Ctrl+C` in the terminal.
 
 ```
 gmail-notification/
-├── main.py           # AppIndicator entry point
+├── src/
+│   ├── main.py       # AppIndicator entry point
+│   ├── popup.py      # Top-bar popup window
+│   └── tray_menu.py  # Right-click tray menu
 ├── assets/
 │   └── icon.svg      # Tray icon
 └── requirements.txt  # System package notes
@@ -53,7 +62,7 @@ gmail-notification/
 
 - Confirm the AppIndicator GNOME extension is installed and enabled.
 - Log out and back in after enabling the extension.
-- Make sure the app is still running (`python3 main.py`).
+- Make sure the app is still running (`make run`).
 
 **`Namespace AppIndicator3 not available`**
 
