@@ -1,0 +1,6 @@
+# System packages (Ubuntu):
+#   sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1
+#
+# GNOME tray support (log out/in after enabling):
+#   sudo apt install gnome-shell-extension-appindicator
+#   gnome-extensions enable appindicatorsupport@ubuntu.com
