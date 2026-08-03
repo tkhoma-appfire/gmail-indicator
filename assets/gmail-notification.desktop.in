@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Gmail Notification
+Comment=Gmail notification tray icon with Google Calendar
+Exec=@PYTHON@ @PROJECT_ROOT@/src/main.py
+Path=@PROJECT_ROOT@
+Icon=@PROJECT_ROOT@/assets/icon.svg
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

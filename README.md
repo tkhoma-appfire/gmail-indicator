@@ -79,11 +79,29 @@ An envelope icon appears in the top bar.
 - Click outside the popup or press `Escape` to close it.
 - Choose **Quit** from the menu or press `Ctrl+C` in the terminal to exit.
 
+## Run on startup
+
+Install a login autostart entry so the app runs in the background when you sign in:
+
+```bash
+make install-autostart
+```
+
+This creates `~/.config/autostart/gmail-notification.desktop`. Log out and back in (or reboot) for it to take effect.
+
+To remove it:
+
+```bash
+make uninstall-autostart
+```
+
 ## Makefile targets
 
 | Target | Description |
 |--------|-------------|
 | `make run` | Start the tray indicator |
+| `make install-autostart` | Start app in background on login |
+| `make uninstall-autostart` | Remove login autostart entry |
 | `make check` | Verify Python/GObject dependencies |
 | `make clean` | Remove Python cache files |
 
@@ -97,7 +115,8 @@ gmail-notification/
 │   ├── tray_menu.py         # Right-click tray menu
 │   └── google_calendar.py   # Google Calendar API client
 ├── assets/
-│   └── icon.svg             # Tray icon
+│   ├── icon.svg             # Tray icon
+│   └── gmail-notification.desktop.in  # Autostart template
 ├── credentials.json         # Google OAuth credentials (not in git)
 ├── token.json               # Saved auth token (not in git)
 ├── Makefile
