@@ -17,6 +17,7 @@ class JiraTicket:
     key: str
     summary: str
     status: str
+    priority: str
 
 
 class JiraClient:
@@ -59,11 +60,13 @@ class JiraClient:
         for issue in data.get("issues", []):
             fields = issue.get("fields", {})
             status = fields.get("status", {}).get("name", "Unknown")
+            priority = fields.get("priority", {}).get("name", "Unknown")
             tickets.append(
                 JiraTicket(
                     key=issue.get("key", "???"),
                     summary=fields.get("summary", "(No summary)"),
                     status=status,
+                    priority=priority,
                 )
             )
         return tickets

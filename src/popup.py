@@ -491,7 +491,7 @@ def _create_ticket_row(ticket: JiraTicket) -> Gtk.Widget:
     title_label.get_style_context().add_class("event-title")
     details.pack_start(title_label, False, False, 0)
 
-    status_label = Gtk.Label(label=ticket.status)
+    status_label = Gtk.Label(label=f"{ticket.priority} · {ticket.status}")
     status_label.set_xalign(0)
     status_label.get_style_context().add_class("popup-message")
     details.pack_start(status_label, False, False, 0)

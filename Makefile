@@ -1,4 +1,4 @@
-.PHONY: help run check clean install-autostart uninstall-autostart simulate-notification
+.PHONY: help run run-background check clean install-autostart uninstall-autostart simulate-notification
 
 PYTHON ?= python3
 MAIN := src/main.py
@@ -12,6 +12,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  make run                    Run the tray indicator"
+	@echo "  make run-background         Run the tray indicator in background"
 	@echo "  make install-autostart      Start app in background on login"
 	@echo "  make uninstall-autostart    Remove login autostart entry"
 	@echo "  make check                  Verify Python/GObject dependencies"
@@ -20,6 +21,10 @@ help:
 
 run:
 	$(PYTHON) $(MAIN)
+
+run-background:
+	@nohup $(PYTHON) $(MAIN) >/dev/null 2>&1 &
+	@echo "Started gmail-notification in background."
 
 install-autostart:
 	@mkdir -p $(AUTOSTART_DIR)
