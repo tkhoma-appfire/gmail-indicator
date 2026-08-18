@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import signal
+import threading
 from pathlib import Path
 
 import gi
@@ -19,8 +20,10 @@ except ValueError:
 
 from gi.repository import Gtk  # noqa: E402
 
+from event_notifier import EventNotifier
 from google_calendar import GoogleCalendarClient
-from popup import Popup
+from jira_client import JiraClient
+from popup import CalendarPopup, JiraPopup
 from tray_menu import TrayMenu
 
 APP_ID = "gmail-notification"
@@ -28,9 +31,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ICON_PATH = PROJECT_ROOT / "assets" / "icon.svg"
 CREDENTIALS_PATH = PROJECT_ROOT / "credentials.json"
 TOKEN_PATH = PROJECT_ROOT / "token.json"
+EVENTS_CACHE_PATH = PROJECT_ROOT / "events_cache.json"
+JIRA_CONFIG_PATH = PROJECT_ROOT / "jira_config.json"
 
-_calendar = GoogleCalendarClient(CREDENTIALS_PATH, TOKEN_PATH)
-_popup = Popup(_calendar)
+_notifier = EventNotifier(APP_ID, ICON_PATH)
+_calendar = GoogleCalendarClient(
+    CREDENTIALS_PATH,
+    TOKEN_PATH,
+    EVENTS_CACHE_PATH,
+    on_events_loaded=_notifier.schedule,
+)
+_calendar_popup = CalendarPopup(_calendar)
+_jira_popup = JiraPopup(JiraClient(JIRA_CONFIG_PATH))
 _tray_menu: TrayMenu | None = None
 
 
@@ -53,9 +65,13 @@ def _anchor_from_menu_item(menu_item: Gtk.MenuItem) -> tuple[int, int] | None:
 def build_menu() -> Gtk.Menu:
     menu = Gtk.Menu()
 
-    popup_item = Gtk.MenuItem(label="Show popup")
+    popup_item = Gtk.MenuItem(label="Show today events")
     popup_item.connect("activate", on_show_popup)
     menu.append(popup_item)
+
+    jira_item = Gtk.MenuItem(label="Show jira tickets")
+    jira_item.connect("activate", on_show_jira_tickets)
+    menu.append(jira_item)
 
     about_item = Gtk.MenuItem(label="About")
     about_item.connect("activate", on_about)
@@ -85,23 +101,40 @@ def on_about(_widget: Gtk.MenuItem) -> None:
 
 
 def on_show_popup(widget: Gtk.MenuItem) -> None:
+    _toggle_popup(_calendar_popup, widget)
+
+
+def on_show_jira_tickets(widget: Gtk.MenuItem) -> None:
+    _toggle_popup(_jira_popup, widget)
+
+
+def _toggle_popup(popup: CalendarPopup | JiraPopup, widget: Gtk.MenuItem) -> None:
     parent = widget.get_parent()
     if isinstance(parent, Gtk.Menu):
         parent.popdown()
 
     anchor = _tray_menu.get_anchor() if _tray_menu else None
     if anchor is not None:
-        _popup.toggle(anchor=anchor, below_click=True)
+        popup.toggle(anchor=anchor, below_click=True)
     else:
-        _popup.toggle(anchor=_anchor_from_menu_item(widget), below_click=False)
+        popup.toggle(anchor=_anchor_from_menu_item(widget), below_click=False)
 
 
 def on_quit(_widget: Gtk.MenuItem) -> None:
     Gtk.main_quit()
 
 
+def _prefetch_todays_events() -> None:
+    try:
+        _calendar.refresh_todays_events()
+    except Exception:
+        pass
+
+
 def main() -> None:
     global _tray_menu
+
+    threading.Thread(target=_prefetch_todays_events, daemon=True).start()
 
     indicator = AppIndicator3.Indicator.new(
         APP_ID,

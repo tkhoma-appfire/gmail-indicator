@@ -1,7 +1,8 @@
-.PHONY: help run check clean install-autostart uninstall-autostart
+.PHONY: help run check clean install-autostart uninstall-autostart simulate-notification
 
 PYTHON ?= python3
 MAIN := src/main.py
+SIMULATE_NOTIFICATION := src/simulate_notification.py
 AUTOSTART_DIR := $(HOME)/.config/autostart
 AUTOSTART_FILE := $(AUTOSTART_DIR)/gmail-notification.desktop
 DESKTOP_TEMPLATE := assets/gmail-notification.desktop.in
@@ -14,6 +15,7 @@ help:
 	@echo "  make install-autostart      Start app in background on login"
 	@echo "  make uninstall-autostart    Remove login autostart entry"
 	@echo "  make check                  Verify Python/GObject dependencies"
+	@echo "  make simulate-notification  Show a sample upcoming-event notification"
 	@echo "  make clean                  Remove Python cache files"
 
 run:
@@ -32,9 +34,12 @@ uninstall-autostart:
 	@echo "Removed $(AUTOSTART_FILE)"
 
 check:
-	@$(PYTHON) -c "import gi; gi.require_version('Gtk', '3.0'); gi.require_version('AyatanaAppIndicator3', '0.1'); from gi.repository import Gtk" \
-		2>/dev/null || $(PYTHON) -c "import gi; gi.require_version('Gtk', '3.0'); gi.require_version('AppIndicator3', '0.1'); from gi.repository import Gtk"
+	@$(PYTHON) -c "import gi; gi.require_version('Gtk', '3.0'); gi.require_version('Notify', '0.7'); gi.require_version('AyatanaAppIndicator3', '0.1'); from gi.repository import Gtk, Notify" \
+		2>/dev/null || $(PYTHON) -c "import gi; gi.require_version('Gtk', '3.0'); gi.require_version('Notify', '0.7'); gi.require_version('AppIndicator3', '0.1'); from gi.repository import Gtk, Notify"
 	@echo Dependencies OK
+
+simulate-notification:
+	$(PYTHON) $(SIMULATE_NOTIFICATION)
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

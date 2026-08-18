@@ -1,10 +1,10 @@
-"""Top-bar popup window."""
+"""Top-bar popup windows."""
 
 from __future__ import annotations
 
 import threading
+from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 import gi
 
@@ -12,11 +12,13 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import Gdk, GLib, Gtk
 
-if TYPE_CHECKING:
-    from google_calendar import CalendarEvent, GoogleCalendarClient
+from events_cache import CalendarEvent
+from google_calendar import GoogleCalendarClient
+from jira_client import JiraClient, JiraTicket
 
 ICON_BELOW_OFFSET = 12
 POPUP_WIDTH = 380
+JIRA_POPUP_WIDTH = 520
 POPUP_MAX_HEIGHT = 320
 
 _POPUP_CSS = b"""
@@ -90,9 +92,8 @@ _POPUP_CSS = b"""
 """
 
 
-class Popup:
-    def __init__(self, calendar_client: GoogleCalendarClient | None = None) -> None:
-        self._calendar_client = calendar_client
+class _PopupBase(ABC):
+    def __init__(self) -> None:
         self._window: Gtk.Window | None = None
         self._overlay: Gtk.Window | None = None
         self._content_box: Gtk.Box | None = None
@@ -102,13 +103,38 @@ class Popup:
     def is_visible(self) -> bool:
         return self._window is not None
 
-    def toggle(self, anchor: tuple[int, int] | None = None, *, below_click: bool = True) -> None:
+    @abstractmethod
+    def _header_title(self) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    def _loading_message(self) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    def _fetch_content(self) -> None:
+        raise NotImplementedError
+
+    def _popup_width(self) -> int:
+        return POPUP_WIDTH
+
+    def toggle(
+        self,
+        anchor: tuple[int, int] | None = None,
+        *,
+        below_click: bool = True,
+    ) -> None:
         if self.is_visible:
             self.close()
         else:
             self.show(anchor=anchor, below_click=below_click)
 
-    def show(self, anchor: tuple[int, int] | None = None, *, below_click: bool = True) -> None:
+    def show(
+        self,
+        anchor: tuple[int, int] | None = None,
+        *,
+        below_click: bool = True,
+    ) -> None:
         if self.is_visible:
             return
 
@@ -120,7 +146,7 @@ class Popup:
         window.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
         window.set_can_focus(True)
         window.add_events(Gdk.EventMask.KEY_PRESS_MASK)
-        window.set_default_size(POPUP_WIDTH, 80)
+        window.set_default_size(self._popup_width(), 80)
 
         card = Gtk.EventBox()
         card.get_style_context().add_class("popup-card")
@@ -146,11 +172,6 @@ class Popup:
         scrolled.add(self._content_box)
         outer.pack_start(scrolled, True, True, 0)
 
-        close_button = Gtk.Button(label="Close")
-        close_button.get_style_context().add_class("popup-close-button")
-        close_button.connect("clicked", lambda _btn: self.close())
-        outer.pack_start(close_button, False, False, 0)
-
         card.add(outer)
         window.add(card)
 
@@ -160,14 +181,14 @@ class Popup:
         self._window = window
         self._overlay = self._create_overlay()
 
-        self._set_message("Loading calendar…")
+        self._set_message(self._loading_message())
         window.show_all()
 
         self._position_window(window, anchor, below_click)
         window.present()
 
         GLib.idle_add(self._grab_keyboard)
-        self._fetch_events_async()
+        threading.Thread(target=self._fetch_content, daemon=True).start()
 
     def _build_header(self) -> Gtk.Widget:
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -179,7 +200,7 @@ class Popup:
         date_label.get_style_context().add_class("popup-date")
         titles.pack_start(date_label, False, False, 0)
 
-        title_label = Gtk.Label(label="Today's events")
+        title_label = Gtk.Label(label=self._header_title())
         title_label.set_xalign(0)
         title_label.get_style_context().add_class("popup-title")
         titles.pack_start(title_label, False, False, 0)
@@ -201,69 +222,6 @@ class Popup:
         if self._window is not None:
             self._window.destroy()
 
-    def _fetch_events_async(self) -> None:
-        if self._calendar_client is None:
-            self._set_message("Calendar client not configured.")
-            return
-
-        thread = threading.Thread(target=self._load_events, daemon=True)
-        thread.start()
-
-    def _load_events(self) -> None:
-        try:
-            events = self._calendar_client.get_todays_events()
-            GLib.idle_add(self._show_events, events, None)
-        except Exception as exc:
-            GLib.idle_add(self._show_events, None, str(exc))
-
-    def _show_events(
-        self,
-        events: list[CalendarEvent] | None,
-        error: str | None,
-    ) -> bool:
-        if self._content_box is None:
-            return False
-
-        if error:
-            self._set_message(error)
-            return False
-
-        if not events:
-            self._set_message("No events today.")
-            return False
-
-        self._clear_content()
-        for event in events:
-            self._content_box.pack_start(self._create_event_row(event), False, False, 0)
-
-        self._content_box.show_all()
-        if self._window is not None:
-            self._window.queue_resize()
-        return False
-
-    def _create_event_row(self, event: CalendarEvent) -> Gtk.Widget:
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        row.get_style_context().add_class("event-row")
-
-        accent = Gtk.EventBox()
-        accent.get_style_context().add_class("event-accent")
-        row.pack_start(accent, False, False, 0)
-
-        time_label = Gtk.Label(label=event.when)
-        time_label.set_xalign(0)
-        time_label.set_yalign(0.5)
-        time_label.get_style_context().add_class("event-time")
-        row.pack_start(time_label, False, False, 0)
-
-        title_label = Gtk.Label(label=event.summary)
-        title_label.set_xalign(0)
-        title_label.set_yalign(0.5)
-        title_label.set_line_wrap(True)
-        title_label.get_style_context().add_class("event-title")
-        row.pack_start(title_label, True, True, 0)
-
-        return row
-
     def _set_message(self, text: str) -> None:
         self._clear_content()
         if self._content_box is None:
@@ -283,6 +241,22 @@ class Popup:
         for child in self._content_box.get_children():
             self._content_box.remove(child)
             child.destroy()
+
+    def _show_rows(self, rows: list[Gtk.Widget], *, empty_message: str) -> None:
+        if self._content_box is None:
+            return
+
+        if not rows:
+            self._set_message(empty_message)
+            return
+
+        self._clear_content()
+        for row in rows:
+            self._content_box.pack_start(row, False, False, 0)
+
+        self._content_box.show_all()
+        if self._window is not None:
+            self._window.queue_resize()
 
     def _position_window(
         self,
@@ -393,6 +367,137 @@ class Popup:
         cr.set_source_rgba(0, 0, 0, 0)
         cr.paint()
         return False
+
+
+class CalendarPopup(_PopupBase):
+    def __init__(self, calendar_client: GoogleCalendarClient) -> None:
+        super().__init__()
+        self._calendar_client = calendar_client
+
+    def _header_title(self) -> str:
+        return "Today's events"
+
+    def _loading_message(self) -> str:
+        return "Loading calendar…"
+
+    def _fetch_content(self) -> None:
+        try:
+            cached = self._calendar_client.get_cached_events()
+            if self._calendar_client.has_valid_cache() and cached:
+                events = cached
+            else:
+                events = self._calendar_client.refetch_todays_events()
+            GLib.idle_add(self._show_events, events, None)
+        except Exception as exc:
+            GLib.idle_add(self._show_events, None, str(exc))
+
+    def _show_events(
+        self,
+        events: list[CalendarEvent] | None,
+        error: str | None,
+    ) -> bool:
+        if error:
+            self._set_message(error)
+            return False
+
+        if events is None:
+            return False
+
+        rows = [_create_event_row(event) for event in events]
+        self._show_rows(rows, empty_message="No events today.")
+        return False
+
+
+class JiraPopup(_PopupBase):
+    def __init__(self, jira_client: JiraClient) -> None:
+        super().__init__()
+        self._jira_client = jira_client
+
+    def _popup_width(self) -> int:
+        return JIRA_POPUP_WIDTH
+
+    def _header_title(self) -> str:
+        return "Jira tickets"
+
+    def _loading_message(self) -> str:
+        return "Loading tickets…"
+
+    def _fetch_content(self) -> None:
+        try:
+            tickets = self._jira_client.search()
+            GLib.idle_add(self._show_tickets, tickets, None)
+        except Exception as exc:
+            GLib.idle_add(self._show_tickets, None, str(exc))
+
+    def _show_tickets(
+        self,
+        tickets: list[JiraTicket] | None,
+        error: str | None,
+    ) -> bool:
+        if error:
+            self._set_message(error)
+            return False
+
+        if tickets is None:
+            return False
+
+        rows = [_create_ticket_row(ticket) for ticket in tickets]
+        self._show_rows(rows, empty_message="No tickets found.")
+        return False
+
+
+def _create_event_row(event: CalendarEvent) -> Gtk.Widget:
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    row.get_style_context().add_class("event-row")
+
+    accent = Gtk.EventBox()
+    accent.get_style_context().add_class("event-accent")
+    row.pack_start(accent, False, False, 0)
+
+    time_label = Gtk.Label(label=event.when)
+    time_label.set_xalign(0)
+    time_label.set_yalign(0.5)
+    time_label.get_style_context().add_class("event-time")
+    row.pack_start(time_label, False, False, 0)
+
+    title_label = Gtk.Label(label=event.summary)
+    title_label.set_xalign(0)
+    title_label.set_yalign(0.5)
+    title_label.set_line_wrap(True)
+    title_label.get_style_context().add_class("event-title")
+    row.pack_start(title_label, True, True, 0)
+
+    return row
+
+
+def _create_ticket_row(ticket: JiraTicket) -> Gtk.Widget:
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    row.get_style_context().add_class("event-row")
+
+    accent = Gtk.EventBox()
+    accent.get_style_context().add_class("event-accent")
+    row.pack_start(accent, False, False, 0)
+
+    key_label = Gtk.Label(label=ticket.key)
+    key_label.set_xalign(0)
+    key_label.set_yalign(0.5)
+    key_label.get_style_context().add_class("event-time")
+    row.pack_start(key_label, False, False, 0)
+
+    details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+    title_label = Gtk.Label(label=ticket.summary)
+    title_label.set_xalign(0)
+    title_label.set_line_wrap(True)
+    title_label.get_style_context().add_class("event-title")
+    details.pack_start(title_label, False, False, 0)
+
+    status_label = Gtk.Label(label=ticket.status)
+    status_label.set_xalign(0)
+    status_label.get_style_context().add_class("popup-message")
+    details.pack_start(status_label, False, False, 0)
+
+    row.pack_start(details, True, True, 0)
+    return row
 
 
 _styles_loaded = False
