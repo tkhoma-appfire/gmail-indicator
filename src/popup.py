@@ -14,7 +14,7 @@ from gi.repository import Gdk, GLib, Gtk
 
 from events_cache import CalendarEvent
 from google_calendar import GoogleCalendarClient
-from jira_client import JiraClient, JiraTicket
+from jira_client import JiraClient, JiraSearchResult, JiraTicket
 
 ICON_BELOW_OFFSET = 12
 POPUP_WIDTH = 380
@@ -89,6 +89,48 @@ _POPUP_CSS = b"""
 .popup-close-button:hover {
     background-color: #f8f9fa;
 }
+.jira-status-default {
+    color: #5f6368;
+    font-size: 12px;
+}
+.jira-status-todo {
+    color: #1a73e8;
+    font-size: 12px;
+    font-weight: 600;
+}
+.jira-status-in-progress {
+    color: #1e8e3e;
+    font-size: 12px;
+    font-weight: 600;
+}
+.jira-status-review {
+    color: #e37400;
+    font-size: 12px;
+    font-weight: 600;
+}
+.jira-status-blocked {
+    color: #d93025;
+    font-size: 12px;
+    font-weight: 600;
+}
+.jira-status-done {
+    color: #0052CC;
+    font-size: 12px;
+    font-weight: 600;
+}
+.jira-status-acceptance {
+    color: #6554C0;
+    font-size: 12px;
+    font-weight: 600;
+}
+.jira-status-waiting-for-release {
+    color: #FF991F;
+    font-size: 12px;
+    font-weight: 600;
+}
+.jira-status-filters {
+    margin-top: 8px;
+}
 """
 
 
@@ -97,6 +139,7 @@ class _PopupBase(ABC):
         self._window: Gtk.Window | None = None
         self._overlay: Gtk.Window | None = None
         self._content_box: Gtk.Box | None = None
+        self._title_label: Gtk.Label | None = None
         _ensure_popup_styles()
 
     @property
@@ -159,6 +202,10 @@ class _PopupBase(ABC):
 
         outer.pack_start(self._build_header(), False, False, 0)
 
+        below_header = self._build_below_header()
+        if below_header is not None:
+            outer.pack_start(below_header, False, False, 0)
+
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         separator.get_style_context().add_class("popup-separator")
         outer.pack_start(separator, False, False, 0)
@@ -204,6 +251,7 @@ class _PopupBase(ABC):
         title_label.set_xalign(0)
         title_label.get_style_context().add_class("popup-title")
         titles.pack_start(title_label, False, False, 0)
+        self._title_label = title_label
 
         header.pack_start(titles, True, True, 0)
 
@@ -217,6 +265,13 @@ class _PopupBase(ABC):
         header.pack_start(close_button, False, False, 0)
 
         return header
+
+    def _build_below_header(self) -> Gtk.Widget | None:
+        return None
+
+    def _set_header_title(self, text: str) -> None:
+        if self._title_label is not None:
+            self._title_label.set_text(text)
 
     def close(self) -> None:
         if self._window is not None:
@@ -352,6 +407,7 @@ class _PopupBase(ABC):
             self._overlay = None
         self._window = None
         self._content_box = None
+        self._title_label = None
 
     def _on_overlay_press(self, _widget: Gtk.Widget, _event: Gdk.EventButton) -> bool:
         self.close()
@@ -412,6 +468,9 @@ class JiraPopup(_PopupBase):
     def __init__(self, jira_client: JiraClient) -> None:
         super().__init__()
         self._jira_client = jira_client
+        self._filters_box: Gtk.FlowBox | None = None
+        self._tickets: list[JiraTicket] = []
+        self._hidden_statuses: set[str] = set()
 
     def _popup_width(self) -> int:
         return JIRA_POPUP_WIDTH
@@ -422,28 +481,85 @@ class JiraPopup(_PopupBase):
     def _loading_message(self) -> str:
         return "Loading tickets…"
 
+    def _build_below_header(self) -> Gtk.Widget | None:
+        self._filters_box = Gtk.FlowBox()
+        self._filters_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._filters_box.set_max_children_per_line(3)
+        self._filters_box.set_column_spacing(12)
+        self._filters_box.set_row_spacing(4)
+        self._filters_box.get_style_context().add_class("jira-status-filters")
+        return self._filters_box
+
     def _fetch_content(self) -> None:
         try:
-            tickets = self._jira_client.search()
-            GLib.idle_add(self._show_tickets, tickets, None)
+            result = self._jira_client.search()
+            GLib.idle_add(self._show_tickets, result, None)
         except Exception as exc:
             GLib.idle_add(self._show_tickets, None, str(exc))
 
     def _show_tickets(
         self,
-        tickets: list[JiraTicket] | None,
+        result: JiraSearchResult | None,
         error: str | None,
     ) -> bool:
         if error:
             self._set_message(error)
             return False
 
-        if tickets is None:
+        if result is None:
             return False
 
-        rows = [_create_ticket_row(ticket) for ticket in tickets]
-        self._show_rows(rows, empty_message="No tickets found.")
+        if result.sprint_name:
+            self._set_header_title(f"Jira tickets · {result.sprint_name}")
+
+        self._tickets = result.tickets
+        self._hidden_statuses.clear()
+        self._build_status_filters()
+        self._render_tickets()
         return False
+
+    def _build_status_filters(self) -> None:
+        if self._filters_box is None:
+            return
+
+        for child in self._filters_box.get_children():
+            self._filters_box.remove(child)
+            child.destroy()
+
+        statuses = sorted({ticket.status for ticket in self._tickets}, key=str.lower)
+        for status in statuses:
+            item = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            checkbox = Gtk.CheckButton()
+            checkbox.set_active(True)
+            checkbox.connect("toggled", self._on_status_filter_toggled, status)
+            item.pack_start(checkbox, False, False, 0)
+
+            label = Gtk.Label(label=status)
+            label.set_xalign(0)
+            label.get_style_context().add_class(_status_css_class(status))
+            item.pack_start(label, False, False, 0)
+
+            self._filters_box.add(item)
+
+        self._filters_box.show_all()
+
+    def _on_status_filter_toggled(self, checkbox: Gtk.CheckButton, status: str) -> None:
+        if checkbox.get_active():
+            self._hidden_statuses.discard(status)
+        else:
+            self._hidden_statuses.add(status)
+        self._render_tickets()
+
+    def _render_tickets(self) -> None:
+        visible = [ticket for ticket in self._tickets if ticket.status not in self._hidden_statuses]
+        rows = [_create_ticket_row(ticket) for ticket in visible]
+        self._show_rows(rows, empty_message="No tickets found.")
+
+    def _on_window_destroy(self, window: Gtk.Window) -> None:
+        self._filters_box = None
+        self._tickets = []
+        self._hidden_statuses.clear()
+        super()._on_window_destroy(window)
 
 
 def _create_event_row(event: CalendarEvent) -> Gtk.Widget:
@@ -491,13 +607,43 @@ def _create_ticket_row(ticket: JiraTicket) -> Gtk.Widget:
     title_label.get_style_context().add_class("event-title")
     details.pack_start(title_label, False, False, 0)
 
-    status_label = Gtk.Label(label=f"{ticket.priority} · {ticket.status}")
+    meta = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+    priority_label = Gtk.Label(label=ticket.priority)
+    priority_label.set_xalign(0)
+    priority_label.get_style_context().add_class("popup-message")
+    meta.pack_start(priority_label, False, False, 0)
+
+    dot_label = Gtk.Label(label="·")
+    dot_label.get_style_context().add_class("popup-message")
+    meta.pack_start(dot_label, False, False, 0)
+
+    status_label = Gtk.Label(label=ticket.status)
     status_label.set_xalign(0)
-    status_label.get_style_context().add_class("popup-message")
-    details.pack_start(status_label, False, False, 0)
+    status_label.get_style_context().add_class(_status_css_class(ticket.status))
+    meta.pack_start(status_label, False, False, 0)
+    details.pack_start(meta, False, False, 0)
 
     row.pack_start(details, True, True, 0)
     return row
+
+
+def _status_css_class(status: str) -> str:
+    normalized = status.strip().lower()
+    if normalized == "acceptance":
+        return "jira-status-acceptance"
+    if normalized == "waiting for release":
+        return "jira-status-waiting-for-release"
+    if normalized in {"done", "closed", "resolved", "complete", "completed"}:
+        return "jira-status-done"
+    if normalized in {"in progress", "in development", "working"}:
+        return "jira-status-in-progress"
+    if normalized in {"to do", "open", "backlog", "selected for development", "ready for dev"}:
+        return "jira-status-todo"
+    if normalized in {"in review", "code review", "peer review", "qa", "testing"}:
+        return "jira-status-review"
+    if normalized in {"blocked", "on hold", "impediment"}:
+        return "jira-status-blocked"
+    return "jira-status-default"
 
 
 _styles_loaded = False
