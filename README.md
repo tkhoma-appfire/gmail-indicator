@@ -1,6 +1,6 @@
 # Gmail Notification
 
-A Python application that runs in the Ubuntu top bar using [AppIndicator](https://github.com/AyatanaIndicators/libayatana-appindicator). It shows a tray icon with a right-click context menu and a popup that lists upcoming events from your Google Calendar.
+A Python application that runs in the Ubuntu top bar using [Ayatana AppIndicator](https://github.com/AyatanaIndicators/libayatana-appindicator) (DBusMenu + `Gtk.Menu` on GNOME). It shows a tray icon with a context menu and a popup that lists upcoming events from your Google Calendar.
 
 ## Features
 
@@ -22,7 +22,7 @@ A Python application that runs in the Ubuntu top bar using [AppIndicator](https:
 Install system dependencies:
 
 ```bash
-sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicatorglib-2.0
+sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1
 ```
 
 Install Python dependencies (Ubuntu packages):
@@ -143,13 +143,14 @@ gmail-notification/
 - Log out and back in after enabling the extension.
 - Make sure the app is still running (`make run`).
 
-**`libayatana-appindicator is deprecated` warning**
+**Tray menu does not open (icon only)**
 
-- Install the GLib-based bindings: `sudo apt install gir1.2-ayatanaappindicatorglib-2.0`, then restart the app.
+- Confirm **Ubuntu AppIndicators** is enabled: `gnome-extensions enable ubuntu-appindicators@ubuntu.com` (log out/in after changes).
+- The default tray backend uses DBusMenu (`gir1.2-ayatanaappindicator3-0.1`). Experimental GLib menus: `GMAIL_NOTIFICATION_TRAY_BACKEND=glib` (often no menu on GNOME until the panel supports `org.gtk.Menus`).
 
-**`Namespace AyatanaAppIndicatorGlib` / `AppIndicator3` not available**
+**`Namespace AppIndicator3` / `AyatanaAppIndicator3` not available**
 
-- Prefer `gir1.2-ayatanaappindicatorglib-2.0`. Older Ubuntu releases may only have `gir1.2-ayatanaappindicator3-0.1` (legacy API; the app still works but may log a deprecation warning).
+- Install `gir1.2-ayatanaappindicator3-0.1`.
 
 **`No module named 'googleapiclient'` or `No module named 'google_auth_oauthlib'`**
 

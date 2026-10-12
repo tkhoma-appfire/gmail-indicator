@@ -66,7 +66,7 @@ flowchart TB
 | Module | Responsibility |
 |--------|----------------|
 | `main.py` | AppIndicator, menu, popup toggles, startup prefetch |
-| `tray/` | AppIndicator loader, menu (GMenu or Gtk.Menu), pointer anchor for popups |
+| `tray/` | AppIndicator (legacy DBusMenu + Gtk.Menu), optional GLib GMenu, pointer anchor |
 | `popup/windows.py` | `CalendarPopup`, `JiraPopup`, shared shell UI and positioning |
 | `clients/google_calendar.py` | OAuth, Calendar API, today’s events |
 | `events_cache.py` | In-memory + disk cache, TTL, `CalendarEvent` model |

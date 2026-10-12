@@ -1,4 +1,4 @@
-"""Tray menu for AppIndicator (GMenu on glib API, Gtk.Menu on legacy)."""
+"""Tray menu (Gtk.Menu on legacy DBusMenu; GMenu on optional GLib backend)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Any
 
 import gi
 
+gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 
 import gdk_backend
@@ -16,6 +17,7 @@ from gi.repository import Gdk, Gio, Gtk
 from .indicator import IndicatorBackend
 
 MenuHandlers = dict[str, Callable[[], None]]
+_ACTION_PREFIX = "indicator."
 
 
 class TrayMenu:
@@ -23,6 +25,8 @@ class TrayMenu:
 
     def __init__(self) -> None:
         self._anchor: tuple[int, int] | None = None
+        self._actions: Gio.SimpleActionGroup | None = None
+        self._gmenu: Gio.Menu | None = None
 
     def get_anchor(self) -> tuple[int, int] | None:
         return self._anchor
@@ -94,7 +98,6 @@ class TrayMenu:
         indicator.set_menu(menu)
 
     def _attach_glib(self, indicator: Any, handlers: MenuHandlers) -> None:
-        prefix = "indicator."
         actions = Gio.SimpleActionGroup()
 
         def bind_action(name: str, handler: Callable[[], None]) -> None:
@@ -113,16 +116,19 @@ class TrayMenu:
         bind_action("quit", handlers["quit"])
 
         main_section = Gio.Menu()
-        main_section.append("Show today events", f"{prefix}show-popup")
-        main_section.append("Show jira tickets", f"{prefix}show-jira")
-        main_section.append("About", f"{prefix}about")
+        main_section.append("Show today events", f"{_ACTION_PREFIX}show-popup")
+        main_section.append("Show jira tickets", f"{_ACTION_PREFIX}show-jira")
+        main_section.append("About", f"{_ACTION_PREFIX}about")
 
         quit_section = Gio.Menu()
-        quit_section.append("Quit", f"{prefix}quit")
+        quit_section.append("Quit", f"{_ACTION_PREFIX}quit")
 
         menu = Gio.Menu()
         menu.append_section(None, main_section)
         menu.append_section(None, quit_section)
+
+        self._actions = actions
+        self._gmenu = menu
 
         indicator.set_actions(actions)
         indicator.set_menu(menu)

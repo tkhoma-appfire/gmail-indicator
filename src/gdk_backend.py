@@ -6,12 +6,18 @@ from typing import Any
 
 
 def configure() -> None:
-    # Popup positioning on GNOME Wayland uses a fullscreen shell (see popup/windows.py).
-    return None
+    """Pin GTK 3 / GDK 3 before any ``gi.repository`` import (avoids defaulting to GDK 4)."""
+    import gi
+
+    gi.require_version("Gdk", "3.0")
+    gi.require_version("Gtk", "3.0")
 
 
 def pointer_position(device: Any) -> tuple[int, int, int]:
     """Return (x, y, button_mask) from Gdk.Device.get_position() across GDK versions."""
+    import gi
+
+    gi.require_version("Gdk", "3.0")
     from gi.repository import Gdk
 
     pos = device.get_position()

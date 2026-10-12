@@ -1,6 +1,5 @@
 # System packages (Ubuntu):
-#   sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-notify-0.7 gir1.2-ayatanaappindicatorglib-2.0
-#   (fallback: gir1.2-ayatanaappindicator3-0.1 — logs a deprecation warning)
+#   sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-notify-0.7 gir1.2-ayatanaappindicator3-0.1
 # Wayland popup positioning (GNOME/KDE):
 #   sudo apt install gir1.2-gtklayershell-0.1 libgtk-layer-shell0
 #
