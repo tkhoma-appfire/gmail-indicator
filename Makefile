@@ -40,7 +40,8 @@ uninstall-autostart:
 	@echo "Removed $(AUTOSTART_FILE)"
 
 check:
-	@$(PYTHON) -c "import gi; gi.require_version('Gtk', '3.0'); gi.require_version('Notify', '0.7'); gi.require_version('AyatanaAppIndicator3', '0.1'); from gi.repository import Gtk, Notify" \
+	@$(PYTHON) -c "import gi; gi.require_version('Gtk', '3.0'); gi.require_version('Notify', '0.7'); gi.require_version('AyatanaAppIndicatorGlib', '2.0'); from gi.repository import Gtk, Notify" \
+		2>/dev/null || $(PYTHON) -c "import gi; gi.require_version('Gtk', '3.0'); gi.require_version('Notify', '0.7'); gi.require_version('AyatanaAppIndicator3', '0.1'); from gi.repository import Gtk, Notify" \
 		2>/dev/null || $(PYTHON) -c "import gi; gi.require_version('Gtk', '3.0'); gi.require_version('Notify', '0.7'); gi.require_version('AppIndicator3', '0.1'); from gi.repository import Gtk, Notify"
 	@$(PYTHON) -c "import os, sys; sys.path.insert(0, 'src'); import gi; gi.require_version('Gdk','3.0'); gi.require_version('Gtk','3.0'); from gi.repository import Gdk; \
 wayland=os.environ.get('XDG_SESSION_TYPE','').lower()=='wayland'; \

@@ -22,7 +22,7 @@ A Python application that runs in the Ubuntu top bar using [AppIndicator](https:
 Install system dependencies:
 
 ```bash
-sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1
+sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicatorglib-2.0
 ```
 
 Install Python dependencies (Ubuntu packages):
@@ -119,7 +119,9 @@ gmail-notification/
 │   ├── popup/               # Calendar and Jira popup windows
 │   │   ├── windows.py
 │   │   └── layer_shell.py
-│   ├── tray_menu.py         # Tray menu
+│   ├── tray/                # AppIndicator icon + menu
+│   │   ├── indicator.py
+│   │   └── menu.py
 │   ├── clients/             # Google Calendar and Jira API clients
 │   │   ├── google_calendar.py
 │   │   └── jira_client.py
@@ -141,9 +143,13 @@ gmail-notification/
 - Log out and back in after enabling the extension.
 - Make sure the app is still running (`make run`).
 
-**`Namespace AppIndicator3 not available`**
+**`libayatana-appindicator is deprecated` warning**
 
-- Install `gir1.2-ayatanaappindicator3-0.1`. On Ubuntu 24.04 the library is exposed as `AyatanaAppIndicator3`; the app handles both old and new names automatically.
+- Install the GLib-based bindings: `sudo apt install gir1.2-ayatanaappindicatorglib-2.0`, then restart the app.
+
+**`Namespace AyatanaAppIndicatorGlib` / `AppIndicator3` not available**
+
+- Prefer `gir1.2-ayatanaappindicatorglib-2.0`. Older Ubuntu releases may only have `gir1.2-ayatanaappindicator3-0.1` (legacy API; the app still works but may log a deprecation warning).
 
 **`No module named 'googleapiclient'` or `No module named 'google_auth_oauthlib'`**
 

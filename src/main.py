@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ubuntu top-bar indicator using AppIndicator3."""
+"""Ubuntu top-bar indicator using Ayatana AppIndicator."""
 
 from __future__ import annotations
 
@@ -15,19 +15,12 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 
-try:
-    gi.require_version("AyatanaAppIndicator3", "0.1")
-    from gi.repository import AyatanaAppIndicator3 as AppIndicator3  # noqa: E402
-except ValueError:
-    gi.require_version("AppIndicator3", "0.1")
-    from gi.repository import AppIndicator3  # noqa: E402
-
 from gi.repository import Gdk, Gtk  # noqa: E402
 
 from notification import EventNotifier
 from clients import GoogleCalendarClient, JiraClient
 from popup import CalendarPopup, JiraPopup
-from tray_menu import TrayMenu
+from tray import TrayMenu, create_indicator, load_indicator_api
 
 APP_ID = "gmail-notification"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -49,32 +42,7 @@ _jira_popup = JiraPopup(JiraClient(JIRA_CONFIG_PATH))
 _tray_menu: TrayMenu | None = None
 
 
-def build_menu() -> Gtk.Menu:
-    menu = Gtk.Menu()
-
-    popup_item = Gtk.MenuItem(label="Show today events")
-    popup_item.connect("activate", on_show_popup)
-    menu.append(popup_item)
-
-    jira_item = Gtk.MenuItem(label="Show jira tickets")
-    jira_item.connect("activate", on_show_jira_tickets)
-    menu.append(jira_item)
-
-    about_item = Gtk.MenuItem(label="About")
-    about_item.connect("activate", on_about)
-    menu.append(about_item)
-
-    menu.append(Gtk.SeparatorMenuItem())
-
-    quit_item = Gtk.MenuItem(label="Quit")
-    quit_item.connect("activate", on_quit)
-    menu.append(quit_item)
-
-    menu.show_all()
-    return menu
-
-
-def on_about(_widget: Gtk.MenuItem) -> None:
+def on_about() -> None:
     dialog = Gtk.MessageDialog(
         transient_for=None,
         flags=0,
@@ -87,12 +55,12 @@ def on_about(_widget: Gtk.MenuItem) -> None:
     dialog.destroy()
 
 
-def on_show_popup(widget: Gtk.MenuItem) -> None:
-    _toggle_popup(_calendar_popup, widget)
+def on_show_popup() -> None:
+    _toggle_popup(_calendar_popup)
 
 
-def on_show_jira_tickets(widget: Gtk.MenuItem) -> None:
-    _toggle_popup(_jira_popup, widget)
+def on_show_jira_tickets() -> None:
+    _toggle_popup(_jira_popup)
 
 
 def _pointer_anchor() -> tuple[int, int] | None:
@@ -138,21 +106,17 @@ def _tray_fallback_anchor() -> tuple[int, int] | None:
     return (geometry.x + geometry.width - 48, geometry.y + 16)
 
 
-def _toggle_popup(popup: CalendarPopup | JiraPopup, widget: Gtk.MenuItem) -> None:
+def _toggle_popup(popup: CalendarPopup | JiraPopup) -> None:
     anchor = _pointer_anchor()
     if anchor is None and _tray_menu is not None:
         anchor = _tray_menu.get_anchor()
     if anchor is None:
         anchor = _tray_fallback_anchor()
 
-    parent = widget.get_parent()
-    if isinstance(parent, Gtk.Menu):
-        parent.popdown()
-
     popup.toggle(anchor=anchor, below_click=False)
 
 
-def on_quit(_widget: Gtk.MenuItem) -> None:
+def on_quit() -> None:
     Gtk.main_quit()
 
 
@@ -168,14 +132,20 @@ def main() -> None:
 
     threading.Thread(target=_prefetch_todays_events, daemon=True).start()
 
-    indicator = AppIndicator3.Indicator.new(
-        APP_ID,
-        str(ICON_PATH),
-        AppIndicator3.IndicatorCategory.APPLICATION_STATUS,
-    )
-    indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+    backend, api = load_indicator_api()
+    indicator = create_indicator(backend, api, APP_ID, ICON_PATH)
+    indicator.set_status(api.IndicatorStatus.ACTIVE)
     indicator.set_title("Gmail Notification")
-    _tray_menu = TrayMenu(indicator, build_menu())
+    _tray_menu = TrayMenu.attach(
+        indicator,
+        backend,
+        {
+            "show_popup": on_show_popup,
+            "show_jira": on_show_jira_tickets,
+            "about": on_about,
+            "quit": on_quit,
+        },
+    )
 
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     Gtk.main()

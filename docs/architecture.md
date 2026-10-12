@@ -66,7 +66,7 @@ flowchart TB
 | Module | Responsibility |
 |--------|----------------|
 | `main.py` | AppIndicator, menu, popup toggles, startup prefetch |
-| `tray_menu.py` | Attaches menu to indicator; records pointer position for monitor anchoring |
+| `tray/` | AppIndicator loader, menu (GMenu or Gtk.Menu), pointer anchor for popups |
 | `popup/windows.py` | `CalendarPopup`, `JiraPopup`, shared shell UI and positioning |
 | `clients/google_calendar.py` | OAuth, Calendar API, today’s events |
 | `events_cache.py` | In-memory + disk cache, TTL, `CalendarEvent` model |
