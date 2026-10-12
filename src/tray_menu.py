@@ -6,6 +6,8 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 
+import gdk_backend
+
 from gi.repository import Gdk, GLib, Gtk
 
 
@@ -37,7 +39,7 @@ class TrayMenu:
             GLib.idle_add(self._menu.popdown)
             return
 
-        _screen, x, y, mask = pointer.get_position()
+        x, y, mask = gdk_backend.pointer_position(pointer)
 
         is_right_click = mask & Gdk.ModifierType.BUTTON3_MASK
         is_left_click = mask & Gdk.ModifierType.BUTTON1_MASK

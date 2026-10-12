@@ -131,15 +131,28 @@ _POPUP_CSS = b"""
 .jira-status-filters {
     margin-top: 8px;
 }
+.popup-shell-window {
+    background-color: rgba(0, 0, 0, 0);
+}
+.popup-shell-overlay {
+    background-color: rgba(0, 0, 0, 0);
+}
 """
 
 
 class _PopupBase(ABC):
     def __init__(self) -> None:
         self._window: Gtk.Window | None = None
-        self._overlay: Gtk.Window | None = None
+        self._overlay: Gtk.Overlay | None = None
+        self._card: Gtk.Widget | None = None
+        self._catcher: Gtk.EventBox | None = None
+        self._monitor: Gdk.Monitor | None = None
+        self._monitor_geometry: Gdk.Rectangle | None = None
         self._content_box: Gtk.Box | None = None
         self._title_label: Gtk.Label | None = None
+        self._popup_anchor: tuple[int, int] | None = None
+        self._popup_below_click = True
+        self._shell_placed = False
         _ensure_popup_styles()
 
     @property
@@ -181,17 +194,45 @@ class _PopupBase(ABC):
         if self.is_visible:
             return
 
-        window = Gtk.Window(type=Gtk.WindowType.POPUP)
+        monitor = self._monitor_for_anchor(anchor)
+        self._monitor = monitor
+        self._monitor_geometry = (
+            monitor.get_geometry() if monitor is not None else self._get_primary_monitor_geometry()
+        )
+        geometry = self._monitor_geometry
+
+        window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
         window.set_decorated(False)
+        window.set_app_paintable(True)
         window.set_resizable(False)
         window.set_skip_taskbar_hint(True)
         window.set_skip_pager_hint(True)
-        window.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
+        window.set_default_size(geometry.width, geometry.height)
+        window.get_style_context().add_class("popup-shell-window")
+        window.set_keep_above(True)
+        _apply_transparent_visual(window)
         window.set_can_focus(True)
         window.add_events(Gdk.EventMask.KEY_PRESS_MASK)
-        window.set_default_size(self._popup_width(), 80)
+        self._shell_placed = False
+        self._popup_anchor = anchor
+        self._popup_below_click = below_click
+
+        overlay = Gtk.Overlay()
+        overlay.set_hexpand(True)
+        overlay.set_vexpand(True)
+        overlay.get_style_context().add_class("popup-shell-overlay")
+        window.add(overlay)
+
+        catcher = Gtk.EventBox()
+        catcher.set_hexpand(True)
+        catcher.set_vexpand(True)
+        catcher.connect("button-press-event", self._on_overlay_press)
+        catcher.connect("draw", self._on_overlay_draw)
+        overlay.add(catcher)
 
         card = Gtk.EventBox()
+        card.set_halign(Gtk.Align.START)
+        card.set_valign(Gtk.Align.START)
         card.get_style_context().add_class("popup-card")
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -220,20 +261,24 @@ class _PopupBase(ABC):
         outer.pack_start(scrolled, True, True, 0)
 
         card.add(outer)
-        window.add(card)
+        overlay.add_overlay(card)
 
         window.connect("destroy", self._on_window_destroy)
+        window.connect("draw", self._on_shell_draw)
         window.connect("key-press-event", self._on_key_press)
+        window.connect("realize", self._on_window_realize)
+        window.connect("configure-event", self._on_window_configure)
 
         self._window = window
-        self._overlay = self._create_overlay()
+        self._overlay = overlay
+        self._card = card
+        self._catcher = catcher
 
         self._set_message(self._loading_message())
         window.show_all()
-
-        self._position_window(window, anchor, below_click)
         window.present()
-
+        GLib.idle_add(self._place_shell_on_monitor)
+        GLib.idle_add(self._reposition_popup)
         GLib.idle_add(self._grab_keyboard)
         threading.Thread(target=self._fetch_content, daemon=True).start()
 
@@ -312,28 +357,122 @@ class _PopupBase(ABC):
         self._content_box.show_all()
         if self._window is not None:
             self._window.queue_resize()
+            self._reposition_popup()
 
-    def _position_window(
-        self,
-        window: Gtk.Window,
-        anchor: tuple[int, int] | None,
-        below_click: bool,
-    ) -> None:
-        geometry = self._get_primary_monitor_geometry()
-        width, height = window.get_size()
+    def _reposition_popup(self) -> bool:
+        self._position_card()
+        return False
+
+    def _place_shell_on_monitor(self) -> bool:
+        if self._window is None or self._monitor_geometry is None:
+            return False
+
+        gdk_window = self._window.get_window()
+        if gdk_window is None:
+            return False
+
+        geometry = self._monitor_geometry
+        gdk_window.move_resize(geometry.x, geometry.y, geometry.width, geometry.height)
+        self._apply_transparent_gdk_window(gdk_window)
+        self._sync_monitor_from_window()
+        self._shell_placed = True
+        self._position_card()
+        return False
+
+    def _apply_transparent_gdk_window(self, gdk_window: Gdk.Window) -> None:
+        transparent = Gdk.RGBA()
+        transparent.red = 0.0
+        transparent.green = 0.0
+        transparent.blue = 0.0
+        transparent.alpha = 0.0
+        gdk_window.set_background_rgba(transparent)
+
+    def _sync_monitor_from_window(self) -> None:
+        if self._window is None:
+            return
+
+        gdk_window = self._window.get_window()
+        display = Gdk.Display.get_default()
+        if gdk_window is None or display is None:
+            return
+
+        monitor = display.get_monitor_at_window(gdk_window)
+        if monitor is None:
+            return
+
+        self._monitor = monitor
+        self._monitor_geometry = monitor.get_geometry()
+
+    def _on_window_realize(self, _window: Gtk.Window) -> None:
+        self._place_shell_on_monitor()
+
+    def _on_window_configure(self, _window: Gtk.Window, _event: Gdk.EventConfigure) -> bool:
+        if not self._shell_placed:
+            self._place_shell_on_monitor()
+        else:
+            self._position_card()
+        return False
+
+    def _on_shell_draw(self, _widget: Gtk.Widget, cr) -> bool:
+        cr.set_source_rgba(0.0, 0.0, 0.0, 0.0)
+        cr.paint()
+        return False
+
+    def _position_card(self) -> None:
+        if self._card is None or self._monitor_geometry is None or self._window is None:
+            return
+
+        if self._window.get_window() is None:
+            return
+
+        geometry = self._monitor_geometry
+        width, height = self._card_size()
+        anchor = self._popup_anchor
 
         if anchor is not None:
             anchor_x, anchor_y = anchor
-            x = anchor_x - width // 2
-            y = anchor_y + (ICON_BELOW_OFFSET if below_click else 0)
+            local_x = anchor_x - geometry.x - width // 2
+            local_y = anchor_y - geometry.y + (
+                ICON_BELOW_OFFSET if self._popup_below_click else 0
+            )
         else:
-            x = geometry.x + geometry.width - width - 12
-            y = geometry.y + 32
+            local_x = geometry.width - width - 12
+            local_y = 32
 
         margin = 8
-        x = max(geometry.x + margin, min(x, geometry.x + geometry.width - width - margin))
-        y = max(geometry.y + margin, min(y, geometry.y + geometry.height - height - margin))
-        window.move(x, y)
+        local_x = max(margin, min(local_x, geometry.width - width - margin))
+        local_y = max(margin, min(local_y, geometry.height - height - margin))
+
+        self._card.set_margin_start(local_x)
+        self._card.set_margin_top(local_y)
+
+    def _card_size(self) -> tuple[int, int]:
+        if self._card is None:
+            return self._popup_width(), 80
+
+        width = self._card.get_allocated_width()
+        height = self._card.get_allocated_height()
+        if width > 1 and height > 1:
+            return width, height
+
+        _, natural = self._card.get_preferred_size()
+        return max(natural.width, self._popup_width()), max(natural.height, 80)
+
+    def _monitor_for_anchor(self, anchor: tuple[int, int] | None) -> Gdk.Monitor | None:
+        display = Gdk.Display.get_default()
+        if display is None:
+            return None
+        if anchor is not None:
+            return display.get_monitor_at_point(anchor[0], anchor[1])
+        return display.get_primary_monitor()
+
+    def _monitor_geometry_at(self, x: int, y: int) -> Gdk.Rectangle:
+        display = Gdk.Display.get_default()
+        if display is not None:
+            monitor = display.get_monitor_at_point(x, y)
+            if monitor is not None:
+                return monitor.get_geometry()
+        return self._get_primary_monitor_geometry()
 
     def _get_primary_monitor_geometry(self) -> Gdk.Rectangle:
         display = Gdk.Display.get_default()
@@ -346,38 +485,13 @@ class _PopupBase(ABC):
         monitor_num = screen.get_primary_monitor()
         return screen.get_monitor_geometry(monitor_num)
 
-    def _create_overlay(self) -> Gtk.Window:
-        geometry = self._get_primary_monitor_geometry()
-
-        overlay = Gtk.Window(type=Gtk.WindowType.POPUP)
-        overlay.set_decorated(False)
-        overlay.set_app_paintable(True)
-        overlay.set_skip_taskbar_hint(True)
-        overlay.set_skip_pager_hint(True)
-        overlay.set_can_focus(True)
-        overlay.add_events(Gdk.EventMask.KEY_PRESS_MASK)
-        overlay.resize(geometry.width, geometry.height)
-        overlay.move(geometry.x, geometry.y)
-
-        screen = Gdk.Screen.get_default()
-        if screen is not None:
-            visual = screen.get_rgba_visual()
-            if visual is not None and screen.is_composited():
-                overlay.set_visual(visual)
-
-        overlay.connect("button-press-event", self._on_overlay_press)
-        overlay.connect("key-press-event", self._on_key_press)
-        overlay.connect("draw", self._on_overlay_draw)
-        overlay.show_all()
-
-        return overlay
-
     def _grab_keyboard(self) -> bool:
-        if self._overlay is None:
+        focus_widget = self._catcher or self._window
+        if focus_widget is None:
             return False
 
-        self._overlay.grab_focus()
-        gdk_window = self._overlay.get_window()
+        focus_widget.grab_focus()
+        gdk_window = focus_widget.get_window()
         display = Gdk.Display.get_default()
         if gdk_window is not None and display is not None and hasattr(display, "get_default_seat"):
             seat = display.get_default_seat()
@@ -402,12 +516,16 @@ class _PopupBase(ABC):
 
     def _on_window_destroy(self, _window: Gtk.Window) -> None:
         self._release_keyboard()
-        if self._overlay is not None:
-            self._overlay.destroy()
-            self._overlay = None
         self._window = None
+        self._overlay = None
+        self._card = None
+        self._catcher = None
+        self._monitor = None
+        self._monitor_geometry = None
         self._content_box = None
         self._title_label = None
+        self._popup_anchor = None
+        self._shell_placed = False
 
     def _on_overlay_press(self, _widget: Gtk.Widget, _event: Gdk.EventButton) -> bool:
         self.close()
@@ -647,6 +765,16 @@ def _status_css_class(status: str) -> str:
 
 
 _styles_loaded = False
+
+
+def _apply_transparent_visual(window: Gtk.Window) -> None:
+    screen = Gdk.Screen.get_default()
+    if screen is None:
+        return
+
+    visual = screen.get_rgba_visual()
+    if visual is not None and screen.is_composited():
+        window.set_visual(visual)
 
 
 def _ensure_popup_styles() -> None:
