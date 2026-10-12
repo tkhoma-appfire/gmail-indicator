@@ -11,6 +11,15 @@ from pathlib import Path
 CACHE_TTL = timedelta(hours=3)
 
 
+def parse_iso_datetime(value: str) -> datetime:
+    """Parse ISO timestamps from cache/API; treat naive values as local time."""
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        local_tz = datetime.now().astimezone().tzinfo
+        dt = dt.replace(tzinfo=local_tz)
+    return dt.astimezone()
+
+
 @dataclass(frozen=True)
 class CalendarEvent:
     summary: str
@@ -66,10 +75,11 @@ class EventsCache:
             return False
 
         now = datetime.now().astimezone()
-        if self._cached_at.date() != now.date():
+        cached_at = parse_iso_datetime(self._cached_at.isoformat())
+        if cached_at.date() != now.date():
             return False
 
-        return now - self._cached_at < CACHE_TTL
+        return now - cached_at < CACHE_TTL
 
     def _load_from_disk(self) -> None:
         if not self._path.exists():
@@ -77,7 +87,7 @@ class EventsCache:
 
         try:
             data = json.loads(self._path.read_text())
-            filled_at = datetime.fromisoformat(data["filled_at"])
+            filled_at = parse_iso_datetime(data["filled_at"])
         except (json.JSONDecodeError, OSError, KeyError, ValueError):
             return
 

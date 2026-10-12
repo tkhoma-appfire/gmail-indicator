@@ -69,6 +69,16 @@ _POPUP_CSS = b"""
     font-size: 13px;
     min-width: 72px;
 }
+.jira-ticket-key {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    min-height: 0;
+    min-width: 72px;
+}
+.jira-ticket-key label {
+    color: #1a73e8;
+}
 .event-title {
     color: #202124;
     font-size: 13px;
@@ -717,11 +727,16 @@ def _create_ticket_row(ticket: JiraTicket) -> Gtk.Widget:
     accent.get_style_context().add_class("event-accent")
     row.pack_start(accent, False, False, 0)
 
-    key_label = Gtk.Label(label=ticket.key)
-    key_label.set_xalign(0)
-    key_label.set_yalign(0.5)
-    key_label.get_style_context().add_class("event-time")
-    row.pack_start(key_label, False, False, 0)
+    key_button = Gtk.Button(label=ticket.key)
+    key_button.set_relief(Gtk.ReliefStyle.NONE)
+    key_button.set_can_focus(False)
+    key_button.set_tooltip_text(f"Click to copy {ticket.key}")
+    key_button.get_style_context().add_class("jira-ticket-key")
+    key_button.connect("clicked", _on_copy_ticket_key_clicked, ticket.key)
+    key_button.connect("button-press-event", _on_ticket_key_button_press)
+    key_button.connect("enter-notify-event", _on_ticket_key_enter)
+    key_button.connect("leave-notify-event", _on_ticket_key_leave)
+    row.pack_start(key_button, False, False, 0)
 
     details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
     title_label = Gtk.Label(label=ticket.summary)
@@ -748,6 +763,37 @@ def _create_ticket_row(ticket: JiraTicket) -> Gtk.Widget:
 
     row.pack_start(details, True, True, 0)
     return row
+
+
+def _on_ticket_key_enter(widget: Gtk.Widget, _event: Gdk.EventCrossing) -> bool:
+    window = widget.get_window()
+    display = Gdk.Display.get_default()
+    if window is not None and display is not None:
+        cursor = Gdk.Cursor.new_for_display(display, Gdk.CursorType.HAND2)
+        window.set_cursor(cursor)
+    return False
+
+
+def _on_ticket_key_leave(widget: Gtk.Widget, _event: Gdk.EventCrossing) -> bool:
+    window = widget.get_window()
+    if window is not None:
+        window.set_cursor(None)
+    return False
+
+
+def _copy_text_to_clipboard(text: str) -> None:
+    clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    clipboard.set_text(text, -1)
+
+
+def _on_copy_ticket_key_clicked(_button: Gtk.Button, key: str) -> None:
+    _copy_text_to_clipboard(key)
+
+
+def _on_ticket_key_button_press(_widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
+    if event.button == 3:
+        return True
+    return False
 
 
 def _status_css_class(status: str) -> str:

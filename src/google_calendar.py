@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -49,15 +49,21 @@ class GoogleCalendarClient:
         else:
             events = self._refetch_from_api(max_results)
 
-        if self._on_events_loaded is not None:
-            self._on_events_loaded(list(events))
+        self._notify_events_loaded(events)
         return list(events)
 
     def refetch_todays_events(self, max_results: int = 50) -> list[CalendarEvent]:
         events = self._refetch_from_api(max_results)
-        if self._on_events_loaded is not None:
-            self._on_events_loaded(list(events))
+        self._notify_events_loaded(events)
         return list(events)
+
+    def _notify_events_loaded(self, events: list[CalendarEvent]) -> None:
+        if self._on_events_loaded is None:
+            return
+        try:
+            self._on_events_loaded(list(events))
+        except Exception:
+            pass
 
     def _refetch_from_api(self, max_results: int) -> list[CalendarEvent]:
         events = self._fetch_from_api(max_results)
@@ -157,9 +163,16 @@ def _load_credentials(path: Path) -> Credentials | None:
 
     expiry = data.get("expiry")
     if expiry:
-        creds.expiry = datetime.fromisoformat(expiry)
+        creds.expiry = _utc_naive(datetime.fromisoformat(expiry.replace("Z", "+00:00")))
 
     return creds
+
+
+def _utc_naive(dt: datetime) -> datetime:
+    """Google auth compares expiry to naive UTC."""
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _parse_start(item: dict) -> datetime | None:

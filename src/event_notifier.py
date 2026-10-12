@@ -13,7 +13,7 @@ gi.require_version("Notify", "0.7")
 
 from gi.repository import GLib, Notify
 
-from events_cache import CalendarEvent
+from events_cache import CalendarEvent, parse_iso_datetime
 
 NOTIFY_BEFORE = timedelta(minutes=15)
 
@@ -34,7 +34,7 @@ class EventNotifier:
                 continue
 
             try:
-                starts_at = datetime.fromisoformat(event.starts_at)
+                starts_at = parse_iso_datetime(event.starts_at)
             except ValueError:
                 continue
 

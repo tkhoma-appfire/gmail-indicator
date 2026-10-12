@@ -1,4 +1,4 @@
-"""Right-click-only tray menu for AppIndicator."""
+"""Tray menu for AppIndicator."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ gi.require_version("Gtk", "3.0")
 
 import gdk_backend
 
-from gi.repository import Gdk, GLib, Gtk
+from gi.repository import Gdk, Gtk
 
 
 class TrayMenu:
-    """Attach a menu to an AppIndicator and suppress left-click menu opens."""
+    """Attach a menu to an AppIndicator and record pointer position for popups."""
 
     def __init__(self, indicator, menu: Gtk.Menu) -> None:
         self._menu = menu
@@ -26,26 +26,15 @@ class TrayMenu:
     def _on_menu_map(self, _menu: Gtk.Menu) -> None:
         display = Gdk.Display.get_default()
         if display is None:
-            GLib.idle_add(self._menu.popdown)
             return
 
         seat = display.get_default_seat()
         if seat is None:
-            GLib.idle_add(self._menu.popdown)
             return
 
         pointer = seat.get_pointer()
         if pointer is None:
-            GLib.idle_add(self._menu.popdown)
             return
 
-        x, y, mask = gdk_backend.pointer_position(pointer)
-
-        is_right_click = mask & Gdk.ModifierType.BUTTON3_MASK
-        is_left_click = mask & Gdk.ModifierType.BUTTON1_MASK
-
-        if is_left_click and not is_right_click:
-            GLib.idle_add(self._menu.popdown)
-            return
-
+        x, y, _mask = gdk_backend.pointer_position(pointer)
         self._anchor = (x, y)
