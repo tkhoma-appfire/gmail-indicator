@@ -17,6 +17,7 @@ from google_calendar import GoogleCalendarClient
 from jira_client import JiraClient, JiraSearchResult, JiraTicket
 
 ICON_BELOW_OFFSET = 12
+TOP_POPUP_GAP = 2
 POPUP_WIDTH = 380
 JIRA_POPUP_WIDTH = 520
 POPUP_MAX_HEIGHT = 320
@@ -208,6 +209,7 @@ class _PopupBase(ABC):
         window.set_skip_taskbar_hint(True)
         window.set_skip_pager_hint(True)
         window.set_default_size(geometry.width, geometry.height)
+        window.set_size_request(geometry.width, geometry.height)
         window.get_style_context().add_class("popup-shell-window")
         window.set_keep_above(True)
         _apply_transparent_visual(window)
@@ -220,7 +222,6 @@ class _PopupBase(ABC):
         overlay = Gtk.Overlay()
         overlay.set_hexpand(True)
         overlay.set_vexpand(True)
-        overlay.get_style_context().add_class("popup-shell-overlay")
         window.add(overlay)
 
         catcher = Gtk.EventBox()
@@ -233,6 +234,7 @@ class _PopupBase(ABC):
         card = Gtk.EventBox()
         card.set_halign(Gtk.Align.START)
         card.set_valign(Gtk.Align.START)
+        card.set_size_request(self._popup_width(), -1)
         card.get_style_context().add_class("popup-card")
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -278,6 +280,7 @@ class _PopupBase(ABC):
         window.show_all()
         window.present()
         GLib.idle_add(self._place_shell_on_monitor)
+        GLib.idle_add(self._reposition_popup)
         GLib.idle_add(self._reposition_popup)
         GLib.idle_add(self._grab_keyboard)
         threading.Thread(target=self._fetch_content, daemon=True).start()
@@ -427,24 +430,26 @@ class _PopupBase(ABC):
 
         geometry = self._monitor_geometry
         width, height = self._card_size()
-        anchor = self._popup_anchor
-
-        if anchor is not None:
-            anchor_x, anchor_y = anchor
-            local_x = anchor_x - geometry.x - width // 2
-            local_y = anchor_y - geometry.y + (
-                ICON_BELOW_OFFSET if self._popup_below_click else 0
-            )
-        else:
-            local_x = geometry.width - width - 12
-            local_y = 32
-
         margin = 8
-        local_x = max(margin, min(local_x, geometry.width - width - margin))
-        local_y = max(margin, min(local_y, geometry.height - height - margin))
+        local_x = max(margin, (geometry.width - width) // 2)
+        local_y = self._top_edge_offset()
 
         self._card.set_margin_start(local_x)
         self._card.set_margin_top(local_y)
+        self._card.queue_resize()
+
+    def _top_edge_offset(self) -> int:
+        geometry = self._monitor_geometry
+        if geometry is None:
+            return TOP_POPUP_GAP
+
+        monitor = self._monitor
+        if monitor is not None and hasattr(monitor, "get_workarea"):
+            workarea = monitor.get_workarea()
+            below_top_bar = workarea.y - geometry.y
+            return max(TOP_POPUP_GAP, below_top_bar + TOP_POPUP_GAP)
+
+        return 28 + TOP_POPUP_GAP
 
     def _card_size(self) -> tuple[int, int]:
         if self._card is None:

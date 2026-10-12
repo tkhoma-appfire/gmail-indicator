@@ -50,22 +50,6 @@ _jira_popup = JiraPopup(JiraClient(JIRA_CONFIG_PATH))
 _tray_menu: TrayMenu | None = None
 
 
-def _anchor_from_menu_item(menu_item: Gtk.MenuItem) -> tuple[int, int] | None:
-    widget: Gtk.Widget | None = menu_item
-    while widget is not None and not isinstance(widget, Gtk.Menu):
-        widget = widget.get_parent()
-
-    if not isinstance(widget, Gtk.Menu):
-        return None
-
-    gdk_window = widget.get_window()
-    if gdk_window is None:
-        return None
-
-    x, y = gdk_window.get_origin()
-    return (x + widget.get_allocated_width() // 2, y)
-
-
 def build_menu() -> Gtk.Menu:
     menu = Gtk.Menu()
 
@@ -156,39 +140,17 @@ def _tray_fallback_anchor() -> tuple[int, int] | None:
 
 
 def _toggle_popup(popup: CalendarPopup | JiraPopup, widget: Gtk.MenuItem) -> None:
-    pointer = _pointer_anchor()
-    tray_anchor = _tray_menu.get_anchor() if _tray_menu else None
-
-    if tray_anchor is not None:
-        anchor = tray_anchor
-        below_click = True
-        if pointer is not None:
-            tray_monitor = _monitor_at_point(tray_anchor[0], tray_anchor[1])
-            pointer_monitor = _monitor_at_point(pointer[0], pointer[1])
-            if (
-                tray_monitor is not None
-                and pointer_monitor is not None
-                and tray_monitor != pointer_monitor
-            ):
-                geometry = pointer_monitor.get_geometry()
-                anchor_x = min(max(tray_anchor[0], geometry.x + 8), geometry.x + geometry.width - 8)
-                anchor = (anchor_x, pointer[1])
-    elif pointer is not None:
-        anchor = pointer
-        below_click = True
-    else:
-        anchor = _anchor_from_menu_item(widget)
-        below_click = False
-
+    anchor = _pointer_anchor()
+    if anchor is None and _tray_menu is not None:
+        anchor = _tray_menu.get_anchor()
     if anchor is None:
         anchor = _tray_fallback_anchor()
-        below_click = anchor is not None
 
     parent = widget.get_parent()
     if isinstance(parent, Gtk.Menu):
         parent.popdown()
 
-    popup.toggle(anchor=anchor, below_click=below_click)
+    popup.toggle(anchor=anchor, below_click=False)
 
 
 def on_quit(_widget: Gtk.MenuItem) -> None:
