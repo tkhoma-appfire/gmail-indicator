@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>gmail-notification — Architecture</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f8f9fa;
+      --fg: #202124;
+      --muted: #5f6368;
+      --card: #ffffff;
+      --border: #e0e0e0;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1e1e1e;
+        --fg: #e8eaed;
+        --muted: #9aa0a6;
+        --card: #292929;
+        --border: #3c4043;
+      }
+    }
+    body {
+      font-family: system-ui, sans-serif;
+      line-height: 1.5;
+      max-width: 56rem;
+      margin: 0 auto;
+      padding: 1.5rem;
+      background: var(--bg);
+      color: var(--fg);
+    }
+    h1, h2 { line-height: 1.25; }
+    h2 { margin-top: 2.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem; }
+    p, li { color: var(--fg); }
+    .lead { color: var(--muted); }
+    .diagram {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin: 1rem 0;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      font-size: 0.95rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+    }
+    th { background: var(--card); }
+    code { font-size: 0.9em; }
+    a { color: #1a73e8; }
+  </style>
+</head>
+<body>
+  <h1>Architecture</h1>
+  <p class="lead">How <strong>gmail-notification</strong> fits together. Markdown source: <a href="architecture.md">architecture.md</a>.</p>
+
+  <h2>Component overview</h2>
+  <div class="diagram mermaid">
+flowchart TB
+    subgraph desktop["Ubuntu desktop"]
+        User["User"]
+        Tray["AppIndicator tray icon"]
+        Menu["GTK context menu"]
+        Popups["CalendarPopup / JiraPopup"]
+        Notify["Libnotify toasts"]
+    end
+    subgraph app["Python app — src/main.py"]
+        Main["main() + Gtk.main loop"]
+        TrayMenu["TrayMenu"]
+        GdkB["gdk_backend"]
+    end
+    subgraph calendar["Calendar path"]
+        GCal["GoogleCalendarClient"]
+        Cache["EventsCache"]
+        EN["EventNotifier"]
+    end
+    subgraph jira["Jira path"]
+        Jira["JiraClient"]
+        JCfg["jira_config.json"]
+    end
+    subgraph external["External services"]
+        GAPI["Google Calendar API v3"]
+        JAPI["Jira REST / Agile API"]
+        OAuth["Google OAuth"]
+    end
+    User --> Tray
+    Tray --> Menu
+    Menu --> Main
+    Main --> TrayMenu
+    Main --> Popups
+    Main --> GCal
+    Main --> Jira
+    GCal --> Cache
+    GCal --> OAuth
+    GCal --> GAPI
+    GCal --> EN
+    EN --> Notify
+    Jira --> JCfg
+    Jira --> JAPI
+    Popups --> GCal
+    Popups --> Jira
+    Main --> GdkB
+  </div>
+
+  <h2>Startup</h2>
+  <div class="diagram mermaid">
+sequenceDiagram
+    participant Main as main.py
+    participant Thread as background thread
+    participant GCal as GoogleCalendarClient
+    participant Cache as EventsCache
+    participant API as Google Calendar API
+    participant EN as EventNotifier
+    participant GTK as Gtk.main
+    Main->>Thread: start _prefetch_todays_events()
+    Main->>Main: AppIndicator + TrayMenu + menu
+    Main->>GTK: Gtk.main()
+    Thread->>GCal: refresh_todays_events()
+    alt cache valid
+        GCal->>Cache: get_if_valid()
+    else cache miss
+        GCal->>API: events.list
+        GCal->>Cache: save()
+    end
+    GCal->>EN: schedule(events)
+  </div>
+
+  <h2>Show today's events</h2>
+  <div class="diagram mermaid">
+sequenceDiagram
+    participant User
+    participant Menu
+    participant Main as _toggle_popup
+    participant Pop as CalendarPopup
+    participant GCal as GoogleCalendarClient
+    participant GTK as GLib.idle_add
+    User->>Menu: activate
+    Menu->>Main: anchor
+    Main->>Pop: toggle()
+    Pop->>Pop: _fetch_content thread
+    Pop->>GCal: get cached or refetch
+    Pop->>GTK: _show_events
+    GTK->>User: render rows
+  </div>
+
+  <h2>Show Jira tickets</h2>
+  <div class="diagram mermaid">
+sequenceDiagram
+    participant User
+    participant Pop as JiraPopup
+    participant Jira as JiraClient
+    participant API as Jira API
+    participant GTK as GLib.idle_add
+    User->>Pop: toggle()
+    Pop->>Jira: search()
+    Jira->>API: JQL
+    API-->>Jira: issues
+    Jira-->>Pop: JiraSearchResult
+    Pop->>GTK: _show_tickets
+  </div>
+
+  <h2>Popup UI layering</h2>
+  <div class="diagram mermaid">
+flowchart LR
+    W["Gtk.Window"]
+    O["Gtk.Overlay"]
+    C["EventBox catcher"]
+    Card["Card content"]
+    W --> O
+    O --> C
+    O --> Card
+  </div>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default",
+      securityLevel: "loose",
+    });
+  </script>
+</body>
+</html>

@@ -105,6 +105,10 @@ make uninstall-autostart
 | `make check` | Verify Python/GObject dependencies |
 | `make clean` | Remove Python cache files |
 
+## Architecture
+
+See [architecture.md](architecture.md) (text) or open [architecture.html](architecture.html) in a browser for rendered diagrams.
+
 ## Project structure
 
 ```

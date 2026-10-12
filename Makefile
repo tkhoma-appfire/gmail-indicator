@@ -1,4 +1,4 @@
-.PHONY: help run run-background check clean install-autostart uninstall-autostart simulate-notification
+.PHONY: help run run-background check clean install-autostart uninstall-autostart simulate-notification architecture
 
 PYTHON ?= python3
 MAIN := src/main.py
@@ -17,6 +17,7 @@ help:
 	@echo "  make uninstall-autostart    Remove login autostart entry"
 	@echo "  make check                  Verify Python/GObject dependencies"
 	@echo "  make simulate-notification  Show a sample upcoming-event notification"
+	@echo "  make architecture           Open architecture diagrams in a browser"
 	@echo "  make clean                  Remove Python cache files"
 
 run:
@@ -48,6 +49,9 @@ print('Session:', os.environ.get('XDG_SESSION_TYPE','?'), '| GDK popup fix: XWay
 
 simulate-notification:
 	$(PYTHON) $(SIMULATE_NOTIFICATION)
+
+architecture:
+	@xdg-open architecture.html 2>/dev/null || open architecture.html 2>/dev/null || echo "Open architecture.html in your browser."
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
