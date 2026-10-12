@@ -2,7 +2,7 @@
 
 PYTHON ?= python3
 MAIN := src/main.py
-SIMULATE_NOTIFICATION := src/simulate_notification.py
+SIMULATE_NOTIFICATION := src/notification/simulate_notification.py
 AUTOSTART_DIR := $(HOME)/.config/autostart
 AUTOSTART_FILE := $(AUTOSTART_DIR)/gmail-notification.desktop
 DESKTOP_TEMPLATE := assets/gmail-notification.desktop.in

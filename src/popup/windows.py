@@ -13,14 +13,27 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, GLib, Gtk
 
 from events_cache import CalendarEvent
-from google_calendar import GoogleCalendarClient
-from jira_client import JiraClient, JiraSearchResult, JiraTicket
+from clients import GoogleCalendarClient, JiraClient, JiraSearchResult, JiraTicket
 
 ICON_BELOW_OFFSET = 12
 TOP_POPUP_GAP = 2
 POPUP_WIDTH = 380
 JIRA_POPUP_WIDTH = 520
 POPUP_MAX_HEIGHT = 320
+
+L3_TICKETS_JQL = (
+    'cf[10900] = "L3 Support" AND assignee = currentUser() '
+    "AND sprint in openSprints() AND statusCategory != Done ORDER BY statusCategory DESC"
+)
+
+def _build_support_jql(l3_issue_keys: list[str]) -> str | None:
+    keys = sorted({key for key in l3_issue_keys if key})
+    if not keys:
+        return None
+
+    linked_clauses = " OR ".join(f"issue in linkedIssues({key})" for key in keys)
+    return f"project = SUPPORT AND ({linked_clauses}) ORDER BY status"
+
 
 _POPUP_CSS = b"""
 .popup-card {
@@ -259,18 +272,7 @@ class _PopupBase(ABC):
         if below_header is not None:
             outer.pack_start(below_header, False, False, 0)
 
-        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        separator.get_style_context().add_class("popup-separator")
-        outer.pack_start(separator, False, False, 0)
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_max_content_height(POPUP_MAX_HEIGHT)
-        scrolled.set_propagate_natural_height(True)
-
-        self._content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        scrolled.add(self._content_box)
-        outer.pack_start(scrolled, True, True, 0)
+        self._pack_main_content(outer)
 
         card.add(outer)
         overlay.add_overlay(card)
@@ -327,6 +329,25 @@ class _PopupBase(ABC):
     def _build_below_header(self) -> Gtk.Widget | None:
         return None
 
+    def _pack_main_content(self, outer: Gtk.Box) -> None:
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        separator.get_style_context().add_class("popup-separator")
+        outer.pack_start(separator, False, False, 0)
+
+        scrolled, content_box = self._create_scrolled_list()
+        self._content_box = content_box
+        outer.pack_start(scrolled, True, True, 0)
+
+    def _create_scrolled_list(self) -> tuple[Gtk.ScrolledWindow, Gtk.Box]:
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_max_content_height(POPUP_MAX_HEIGHT)
+        scrolled.set_propagate_natural_height(True)
+
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        scrolled.add(content_box)
+        return scrolled, content_box
+
     def _set_header_title(self, text: str) -> None:
         if self._title_label is not None:
             self._title_label.set_text(text)
@@ -336,38 +357,48 @@ class _PopupBase(ABC):
             self._window.destroy()
 
     def _set_message(self, text: str) -> None:
-        self._clear_content()
-        if self._content_box is None:
-            return
+        if self._content_box is not None:
+            self._set_message_in(self._content_box, text)
 
+    def _set_message_in(self, content_box: Gtk.Box, text: str) -> None:
+        self._clear_content_box(content_box)
         label = Gtk.Label(label=text)
         label.set_xalign(0)
         label.set_line_wrap(True)
         label.get_style_context().add_class("popup-message")
-        self._content_box.pack_start(label, False, False, 0)
-        self._content_box.show_all()
+        content_box.pack_start(label, False, False, 0)
+        content_box.show_all()
 
     def _clear_content(self) -> None:
-        if self._content_box is None:
-            return
+        if self._content_box is not None:
+            self._clear_content_box(self._content_box)
 
-        for child in self._content_box.get_children():
-            self._content_box.remove(child)
+    def _clear_content_box(self, content_box: Gtk.Box) -> None:
+        for child in content_box.get_children():
+            content_box.remove(child)
             child.destroy()
 
     def _show_rows(self, rows: list[Gtk.Widget], *, empty_message: str) -> None:
         if self._content_box is None:
             return
+        self._show_rows_in(self._content_box, rows, empty_message=empty_message)
 
+    def _show_rows_in(
+        self,
+        content_box: Gtk.Box,
+        rows: list[Gtk.Widget],
+        *,
+        empty_message: str,
+    ) -> None:
         if not rows:
-            self._set_message(empty_message)
+            self._set_message_in(content_box, empty_message)
             return
 
-        self._clear_content()
+        self._clear_content_box(content_box)
         for row in rows:
-            self._content_box.pack_start(row, False, False, 0)
+            content_box.pack_start(row, False, False, 0)
 
-        self._content_box.show_all()
+        content_box.show_all()
         if self._window is not None:
             self._window.queue_resize()
             self._reposition_popup()
@@ -602,7 +633,11 @@ class JiraPopup(_PopupBase):
         super().__init__()
         self._jira_client = jira_client
         self._filters_box: Gtk.FlowBox | None = None
+        self._l3_content_box: Gtk.Box | None = None
+        self._support_content_box: Gtk.Box | None = None
         self._tickets: list[JiraTicket] = []
+        self._l3_tickets: list[JiraTicket] = []
+        self._support_tickets: list[JiraTicket] = []
         self._hidden_statuses: set[str] = set()
 
     def _popup_width(self) -> int:
@@ -614,41 +649,79 @@ class JiraPopup(_PopupBase):
     def _loading_message(self) -> str:
         return "Loading tickets…"
 
-    def _build_below_header(self) -> Gtk.Widget | None:
+    def _set_message(self, text: str) -> None:
+        super()._set_message(text)
+        for box in (self._l3_content_box, self._support_content_box):
+            if box is not None:
+                self._set_message_in(box, text)
+
+    def _pack_main_content(self, outer: Gtk.Box) -> None:
+        notebook = Gtk.Notebook()
+        notebook.get_style_context().add_class("jira-tabs")
+
+        all_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self._filters_box = Gtk.FlowBox()
         self._filters_box.set_selection_mode(Gtk.SelectionMode.NONE)
         self._filters_box.set_max_children_per_line(3)
         self._filters_box.set_column_spacing(12)
         self._filters_box.set_row_spacing(4)
         self._filters_box.get_style_context().add_class("jira-status-filters")
-        return self._filters_box
+        all_page.pack_start(self._filters_box, False, False, 0)
+
+        scrolled_all, self._content_box = self._create_scrolled_list()
+        all_page.pack_start(scrolled_all, True, True, 0)
+        notebook.append_page(all_page, Gtk.Label(label="All Tickets"))
+
+        l3_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        scrolled_l3, self._l3_content_box = self._create_scrolled_list()
+        l3_page.pack_start(scrolled_l3, True, True, 0)
+        notebook.append_page(l3_page, Gtk.Label(label="L3 tickets"))
+
+        support_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        scrolled_support, self._support_content_box = self._create_scrolled_list()
+        support_page.pack_start(scrolled_support, True, True, 0)
+        notebook.append_page(support_page, Gtk.Label(label="Support"))
+
+        outer.pack_start(notebook, True, True, 0)
 
     def _fetch_content(self) -> None:
         try:
-            result = self._jira_client.search()
-            GLib.idle_add(self._show_tickets, result, None)
+            all_result = self._jira_client.search()
+            l3_result = self._jira_client.search(jql=L3_TICKETS_JQL)
+            support_jql = _build_support_jql([ticket.key for ticket in l3_result.tickets])
+            if support_jql is not None:
+                support_result = self._jira_client.search(jql=support_jql)
+            else:
+                support_result = JiraSearchResult(tickets=[])
+            GLib.idle_add(self._show_tickets, all_result, l3_result, support_result, None)
         except Exception as exc:
-            GLib.idle_add(self._show_tickets, None, str(exc))
+            GLib.idle_add(self._show_tickets, None, None, None, str(exc))
 
     def _show_tickets(
         self,
-        result: JiraSearchResult | None,
+        all_result: JiraSearchResult | None,
+        l3_result: JiraSearchResult | None,
+        support_result: JiraSearchResult | None,
         error: str | None,
     ) -> bool:
         if error:
             self._set_message(error)
             return False
 
-        if result is None:
+        if all_result is None or l3_result is None or support_result is None:
             return False
 
-        if result.sprint_name:
-            self._set_header_title(f"Jira tickets · {result.sprint_name}")
+        if all_result.sprint_name:
+            self._set_header_title(f"Jira tickets · {all_result.sprint_name}")
 
-        self._tickets = result.tickets
+        self._tickets = all_result.tickets
+        self._l3_tickets = l3_result.tickets
+        self._support_tickets = support_result.tickets
         self._hidden_statuses.clear()
         self._build_status_filters()
         self._render_tickets()
+        self._render_l3_tickets()
+        self._render_support_tickets()
         return False
 
     def _build_status_filters(self) -> None:
@@ -684,13 +757,35 @@ class JiraPopup(_PopupBase):
         self._render_tickets()
 
     def _render_tickets(self) -> None:
+        if self._content_box is None:
+            return
         visible = [ticket for ticket in self._tickets if ticket.status not in self._hidden_statuses]
         rows = [_create_ticket_row(ticket) for ticket in visible]
-        self._show_rows(rows, empty_message="No tickets found.")
+        self._show_rows_in(self._content_box, rows, empty_message="No tickets found.")
+
+    def _render_l3_tickets(self) -> None:
+        if self._l3_content_box is None:
+            return
+        rows = [_create_ticket_row(ticket) for ticket in self._l3_tickets]
+        self._show_rows_in(self._l3_content_box, rows, empty_message="No L3 tickets found.")
+
+    def _render_support_tickets(self) -> None:
+        if self._support_content_box is None:
+            return
+        rows = [_create_ticket_row(ticket) for ticket in self._support_tickets]
+        self._show_rows_in(
+            self._support_content_box,
+            rows,
+            empty_message="No Support tickets found.",
+        )
 
     def _on_window_destroy(self, window: Gtk.Window) -> None:
         self._filters_box = None
+        self._l3_content_box = None
+        self._support_content_box = None
         self._tickets = []
+        self._l3_tickets = []
+        self._support_tickets = []
         self._hidden_statuses.clear()
         super()._on_window_destroy(window)
 

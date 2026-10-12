@@ -67,14 +67,14 @@ flowchart TB
 |--------|----------------|
 | `main.py` | AppIndicator, menu, popup toggles, startup prefetch |
 | `tray_menu.py` | Attaches menu to indicator; records pointer position for monitor anchoring |
-| `popup.py` | `CalendarPopup`, `JiraPopup`, shared shell UI and positioning |
-| `google_calendar.py` | OAuth, Calendar API, today’s events |
+| `popup/windows.py` | `CalendarPopup`, `JiraPopup`, shared shell UI and positioning |
+| `clients/google_calendar.py` | OAuth, Calendar API, today’s events |
 | `events_cache.py` | In-memory + disk cache, TTL, `CalendarEvent` model |
-| `event_notifier.py` | Schedules libnotify reminders 15 minutes before events |
-| `jira_client.py` | JQL search, sprint name, ticket parsing |
+| `notification/event_notifier.py` | Schedules libnotify reminders 15 minutes before events |
+| `clients/jira_client.py` | JQL search, sprint name, ticket parsing |
 | `gdk_backend.py` | GDK pointer position compatibility (Wayland / GTK versions) |
-| `popup_layer_shell.py` | Optional gtk-layer-shell helpers (wlroots; not used on GNOME Mutter) |
-| `simulate_notification.py` | Dev helper for notification testing |
+| `popup/layer_shell.py` | Optional gtk-layer-shell helpers (wlroots; not used on GNOME Mutter) |
+| `notification/simulate_notification.py` | Dev helper for notification testing |
 
 ## Startup
 

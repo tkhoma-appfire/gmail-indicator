@@ -115,9 +115,15 @@ See [architecture.md](architecture.md) (text) or open [architecture.html](archit
 gmail-notification/
 ├── src/
 │   ├── main.py              # AppIndicator entry point
-│   ├── popup.py             # Top-bar popup window
-│   ├── tray_menu.py         # Right-click tray menu
-│   └── google_calendar.py   # Google Calendar API client
+│   ├── notification/      # libnotify reminders + simulate script
+│   ├── popup/               # Calendar and Jira popup windows
+│   │   ├── windows.py
+│   │   └── layer_shell.py
+│   ├── tray_menu.py         # Tray menu
+│   ├── clients/             # Google Calendar and Jira API clients
+│   │   ├── google_calendar.py
+│   │   └── jira_client.py
+│   └── ...
 ├── assets/
 │   ├── icon.svg             # Tray icon
 │   └── gmail-notification.desktop.in  # Autostart template

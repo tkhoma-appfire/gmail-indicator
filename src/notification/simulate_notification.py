@@ -14,7 +14,7 @@ gi.require_version("Notify", "0.7")
 from gi.repository import Notify
 
 APP_ID = "gmail-notification"
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 ICON_PATH = PROJECT_ROOT / "assets" / "icon.svg"
 CACHE_PATH = PROJECT_ROOT / "events_cache.json"
 

@@ -24,9 +24,8 @@ except ValueError:
 
 from gi.repository import Gdk, Gtk  # noqa: E402
 
-from event_notifier import EventNotifier
-from google_calendar import GoogleCalendarClient
-from jira_client import JiraClient
+from notification import EventNotifier
+from clients import GoogleCalendarClient, JiraClient
 from popup import CalendarPopup, JiraPopup
 from tray_menu import TrayMenu
 

@@ -6,7 +6,7 @@ from typing import Any
 
 
 def configure() -> None:
-    # Popup positioning on GNOME Wayland uses a fullscreen shell (see popup.py).
+    # Popup positioning on GNOME Wayland uses a fullscreen shell (see popup/windows.py).
     return None
 
 
