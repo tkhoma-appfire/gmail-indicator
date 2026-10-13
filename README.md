@@ -166,9 +166,9 @@ gmail-notification/
 - Confirm the Google Calendar API is enabled in your Cloud project.
 - Delete `token.json` and sign in again if the saved token is invalid or expired.
 
-**Popup opens in the center of the screen (Wayland)**
+**Popup position (Wayland)**
 
-- On GNOME Wayland the popup uses a fullscreen transparent shell and places the card under the tray anchor (GTK cannot move small popup windows reliably).
+- On GNOME Wayland the popup uses a fullscreen transparent shell and places the card at the **top-right** of the monitor work area (GTK cannot move small popup windows reliably).
 - Restart after updating: `pkill -f gmail-notification/src/main.py && make run`
 - Run from a normal desktop session (not only the IDE terminal) so the tray menu anchor is available.
 

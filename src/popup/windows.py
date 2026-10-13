@@ -15,15 +15,36 @@ from gi.repository import Gdk, GLib, Gtk
 
 from events_cache import CalendarEvent
 from clients import GoogleCalendarClient, JiraClient, JiraSearchResult, JiraTicket
+from .layer_shell import configure_overlay_window
 
 ICON_BELOW_OFFSET = 12
 TOP_POPUP_GAP = 2
+POPUP_SCREEN_MARGIN = 0
+TOP_PANEL_FALLBACK_HEIGHT = 18
 POPUP_WIDTH = 380
 JIRA_POPUP_WIDTH = 520
 POPUP_MAX_HEIGHT = 320
 CALENDAR_LIST_MAX_HEIGHT = 320
 CALENDAR_LIST_MAX_HEIGHT_MULTI = 560
 CALENDAR_EVENT_ROW_HEIGHT = 62
+JIRA_VISIBLE_TICKET_ROWS = 4
+JIRA_TICKET_ROW_HEIGHT = 82
+JIRA_LIST_ROW_SPACING = 8
+JIRA_LIST_PADDING = 16
+JIRA_LIST_BOTTOM_PADDING = 16
+
+
+def _jira_list_viewport_height(visible_rows: int) -> int:
+    rows = max(1, visible_rows)
+    return (
+        JIRA_LIST_PADDING
+        + rows * JIRA_TICKET_ROW_HEIGHT
+        + max(0, rows - 1) * JIRA_LIST_ROW_SPACING
+        + JIRA_LIST_BOTTOM_PADDING
+    )
+
+
+JIRA_LIST_MIN_VIEWPORT = _jira_list_viewport_height(JIRA_VISIBLE_TICKET_ROWS)
 
 L3_TICKETS_JQL = (
     'cf[10900] = "L3 Support" AND assignee = currentUser() '
@@ -37,6 +58,25 @@ def _build_support_jql(l3_issue_keys: list[str]) -> str | None:
 
     linked_clauses = " OR ".join(f"issue in linkedIssues({key})" for key in keys)
     return f"project = SUPPORT AND ({linked_clauses}) ORDER BY status"
+
+
+def _load_support_tickets_for_l3(
+    client: JiraClient,
+    l3_tickets: list[JiraTicket],
+) -> tuple[list[JiraTicket], dict[str, set[str]]]:
+    """Load SUPPORT issues linked to each L3 key; map support key -> linking L3 keys."""
+    by_key: dict[str, JiraTicket] = {}
+    links: dict[str, set[str]] = {}
+    for l3 in l3_tickets:
+        jql = f'project = SUPPORT AND issue in linkedIssues({l3.key}) ORDER BY status'
+        try:
+            result = client.search(jql=jql)
+        except Exception:
+            continue
+        for ticket in result.tickets:
+            by_key[ticket.key] = ticket
+            links.setdefault(ticket.key, set()).add(l3.key)
+    return list(by_key.values()), links
 
 
 _POPUP_CSS = b"""
@@ -156,6 +196,11 @@ _POPUP_CSS = b"""
     font-size: 12px;
     font-weight: 600;
 }
+.jira-status-waiting-for-level-3 {
+    color: #d93025;
+    font-size: 12px;
+    font-weight: 600;
+}
 .jira-status-filters {
     margin-top: 8px;
 }
@@ -171,7 +216,7 @@ _POPUP_CSS = b"""
 class _PopupBase(ABC):
     def __init__(self) -> None:
         self._window: Gtk.Window | None = None
-        self._overlay: Gtk.Overlay | None = None
+        self._fixed: Gtk.Fixed | None = None
         self._card: Gtk.Widget | None = None
         self._catcher: Gtk.EventBox | None = None
         self._monitor: Gdk.Monitor | None = None
@@ -261,21 +306,17 @@ class _PopupBase(ABC):
         self._popup_anchor = anchor
         self._popup_below_click = below_click
 
-        overlay = Gtk.Overlay()
-        overlay.set_hexpand(True)
-        overlay.set_vexpand(True)
-        window.add(overlay)
+        configure_overlay_window(window, monitor)
+
+        fixed = Gtk.Fixed()
+        window.add(fixed)
 
         catcher = Gtk.EventBox()
-        catcher.set_hexpand(True)
-        catcher.set_vexpand(True)
         catcher.connect("button-press-event", self._on_overlay_press)
         catcher.connect("draw", self._on_overlay_draw)
-        overlay.add(catcher)
+        fixed.put(catcher, 0, 0)
 
         card = Gtk.EventBox()
-        card.set_halign(Gtk.Align.START)
-        card.set_valign(Gtk.Align.START)
         card.set_size_request(self._popup_width(), -1)
         card.get_style_context().add_class("popup-card")
 
@@ -294,7 +335,7 @@ class _PopupBase(ABC):
         self._pack_main_content(outer)
 
         card.add(outer)
-        overlay.add_overlay(card)
+        fixed.put(card, 0, 0)
 
         window.connect("destroy", self._on_window_destroy)
         window.connect("draw", self._on_shell_draw)
@@ -303,7 +344,7 @@ class _PopupBase(ABC):
         window.connect("configure-event", self._on_window_configure)
 
         self._window = window
-        self._overlay = overlay
+        self._fixed = fixed
         self._card = card
         self._catcher = catcher
 
@@ -483,21 +524,56 @@ class _PopupBase(ABC):
         return False
 
     def _position_card(self) -> None:
-        if self._card is None or self._monitor_geometry is None or self._window is None:
+        if (
+            self._fixed is None
+            or self._card is None
+            or self._catcher is None
+            or self._monitor_geometry is None
+            or self._window is None
+        ):
             return
 
         if self._window.get_window() is None:
             return
 
         geometry = self._monitor_geometry
-        width, height = self._card_size()
-        margin = 8
-        local_x = max(margin, (geometry.width - width) // 2)
-        local_y = self._top_edge_offset()
+        self._catcher.set_size_request(geometry.width, geometry.height)
+        self._fixed.move(self._catcher, 0, 0)
 
-        self._card.set_margin_start(local_x)
-        self._card.set_margin_top(local_y)
+        card_width, card_height = self._card_size()
+        x, y = self._card_top_right_position(card_width, card_height)
+        self._fixed.move(self._card, x, y)
         self._card.queue_resize()
+
+    def _card_top_right_position(
+        self,
+        card_width: int,
+        card_height: int,
+    ) -> tuple[int, int]:
+        geometry = self._monitor_geometry
+        if geometry is None:
+            return (0, TOP_POPUP_GAP)
+
+        margin_end = self._card_margin_end()
+        x = geometry.width - card_width - margin_end
+        y = self._top_edge_offset()
+        max_y = max(0, geometry.height - card_height - POPUP_SCREEN_MARGIN)
+        return (max(0, x), min(y, max_y))
+
+    def _card_margin_end(self) -> int:
+        geometry = self._monitor_geometry
+        if geometry is None:
+            return POPUP_SCREEN_MARGIN
+
+        monitor = self._monitor
+        if monitor is not None and hasattr(monitor, "get_workarea"):
+            workarea = monitor.get_workarea()
+            physical_right = geometry.x + geometry.width
+            workarea_right = workarea.x + workarea.width
+            inset = max(0, physical_right - workarea_right)
+            return POPUP_SCREEN_MARGIN + inset
+
+        return POPUP_SCREEN_MARGIN
 
     def _top_edge_offset(self) -> int:
         geometry = self._monitor_geometry
@@ -505,12 +581,14 @@ class _PopupBase(ABC):
             return TOP_POPUP_GAP
 
         monitor = self._monitor
+        panel_inset = TOP_PANEL_FALLBACK_HEIGHT
         if monitor is not None and hasattr(monitor, "get_workarea"):
             workarea = monitor.get_workarea()
-            below_top_bar = workarea.y - geometry.y
-            return max(TOP_POPUP_GAP, below_top_bar + TOP_POPUP_GAP)
+            reported = workarea.y - geometry.y
+            if reported > 0:
+                panel_inset = reported
 
-        return 28 + TOP_POPUP_GAP
+        return panel_inset + TOP_POPUP_GAP
 
     def _card_size(self) -> tuple[int, int]:
         if self._card is None:
@@ -583,7 +661,7 @@ class _PopupBase(ABC):
     def _on_window_destroy(self, _window: Gtk.Window) -> None:
         self._release_keyboard()
         self._window = None
-        self._overlay = None
+        self._fixed = None
         self._card = None
         self._catcher = None
         self._monitor = None
@@ -698,7 +776,13 @@ class JiraPopup(_PopupBase):
         self._tickets: list[JiraTicket] = []
         self._l3_tickets: list[JiraTicket] = []
         self._support_tickets: list[JiraTicket] = []
+        self._support_linked_l3: dict[str, set[str]] = {}
         self._hidden_statuses: set[str] = set()
+        self._hide_done_l3 = False
+        self._hide_done_support = False
+        self._l3_done_checkbox: Gtk.CheckButton | None = None
+        self._support_done_checkbox: Gtk.CheckButton | None = None
+        self._scrolled_lists: list[Gtk.ScrolledWindow] = []
 
     def _popup_width(self) -> int:
         return JIRA_POPUP_WIDTH
@@ -708,6 +792,33 @@ class JiraPopup(_PopupBase):
 
     def _loading_message(self) -> str:
         return "Loading tickets…"
+
+    def _create_scrolled_list(self) -> tuple[Gtk.ScrolledWindow, Gtk.Box]:
+        scrolled, content_box = super()._create_scrolled_list()
+        content_box.set_margin_bottom(JIRA_LIST_BOTTOM_PADDING)
+        scrolled.set_max_content_height(JIRA_LIST_MIN_VIEWPORT)
+        return scrolled, content_box
+
+    def _apply_tab_list_height(
+        self,
+        scrolled: Gtk.ScrolledWindow,
+        row_count: int,
+    ) -> None:
+        viewport = JIRA_LIST_MIN_VIEWPORT
+        if row_count <= 0:
+            scrolled.set_min_content_height(-1)
+            scrolled.set_max_content_height(viewport)
+        else:
+            scrolled.set_min_content_height(viewport)
+            scrolled.set_max_content_height(viewport)
+        scrolled.queue_resize()
+
+    def _after_list_resize(self) -> None:
+        if self._card is not None:
+            self._card.queue_resize()
+        if self._window is not None:
+            self._window.queue_resize()
+            GLib.idle_add(self._reposition_popup)
 
     def _set_message(self, text: str) -> None:
         super()._set_message(text)
@@ -729,39 +840,62 @@ class JiraPopup(_PopupBase):
         all_page.pack_start(self._filters_box, False, False, 0)
 
         scrolled_all, self._content_box = self._create_scrolled_list()
-        all_page.pack_start(scrolled_all, True, True, 0)
+        all_page.pack_start(scrolled_all, False, False, 0)
         notebook.append_page(all_page, Gtk.Label(label="All Tickets"))
 
-        l3_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        l3_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        l3_filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        l3_filters.get_style_context().add_class("jira-status-filters")
+        self._l3_done_checkbox = Gtk.CheckButton(label="Done")
+        self._l3_done_checkbox.connect("toggled", self._on_l3_done_toggled)
+        l3_filters.pack_start(self._l3_done_checkbox, False, False, 0)
+        l3_page.pack_start(l3_filters, False, False, 0)
+
         scrolled_l3, self._l3_content_box = self._create_scrolled_list()
-        l3_page.pack_start(scrolled_l3, True, True, 0)
+        l3_page.pack_start(scrolled_l3, False, False, 0)
         notebook.append_page(l3_page, Gtk.Label(label="L3 tickets"))
 
-        support_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        support_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        support_filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        support_filters.get_style_context().add_class("jira-status-filters")
+        self._support_done_checkbox = Gtk.CheckButton(label="Done")
+        self._support_done_checkbox.connect("toggled", self._on_support_done_toggled)
+        support_filters.pack_start(self._support_done_checkbox, False, False, 0)
+        support_page.pack_start(support_filters, False, False, 0)
+
         scrolled_support, self._support_content_box = self._create_scrolled_list()
-        support_page.pack_start(scrolled_support, True, True, 0)
+        support_page.pack_start(scrolled_support, False, False, 0)
         notebook.append_page(support_page, Gtk.Label(label="Support"))
 
-        outer.pack_start(notebook, True, True, 0)
+        self._scrolled_lists = [scrolled_all, scrolled_l3, scrolled_support]
+        outer.pack_start(notebook, False, False, 0)
 
     def _fetch_content(self) -> None:
         try:
             all_result = self._jira_client.search()
             l3_result = self._jira_client.search(jql=L3_TICKETS_JQL)
-            support_jql = _build_support_jql([ticket.key for ticket in l3_result.tickets])
-            if support_jql is not None:
-                support_result = self._jira_client.search(jql=support_jql)
-            else:
-                support_result = JiraSearchResult(tickets=[])
-            GLib.idle_add(self._show_tickets, all_result, l3_result, support_result, None)
+            support_tickets, support_links = _load_support_tickets_for_l3(
+                self._jira_client,
+                l3_result.tickets,
+            )
+            support_result = JiraSearchResult(tickets=support_tickets)
+            GLib.idle_add(
+                self._show_tickets,
+                all_result,
+                l3_result,
+                support_result,
+                support_links,
+                None,
+            )
         except Exception as exc:
-            GLib.idle_add(self._show_tickets, None, None, None, str(exc))
+            GLib.idle_add(self._show_tickets, None, None, None, None, str(exc))
 
     def _show_tickets(
         self,
         all_result: JiraSearchResult | None,
         l3_result: JiraSearchResult | None,
         support_result: JiraSearchResult | None,
+        support_links: dict[str, set[str]] | None,
         error: str | None,
     ) -> bool:
         if error:
@@ -777,6 +911,7 @@ class JiraPopup(_PopupBase):
         self._tickets = all_result.tickets
         self._l3_tickets = l3_result.tickets
         self._support_tickets = support_result.tickets
+        self._support_linked_l3 = support_links or {}
         self._hidden_statuses.clear()
         self._build_status_filters()
         self._render_tickets()
@@ -816,37 +951,87 @@ class JiraPopup(_PopupBase):
             self._hidden_statuses.add(status)
         self._render_tickets()
 
+    def _on_l3_done_toggled(self, checkbox: Gtk.CheckButton) -> None:
+        self._hide_done_l3 = checkbox.get_active()
+        self._render_l3_tickets()
+
+    def _on_support_done_toggled(self, checkbox: Gtk.CheckButton) -> None:
+        self._hide_done_support = checkbox.get_active()
+        self._render_support_tickets()
+
+    def _visible_l3_tickets(self) -> list[JiraTicket]:
+        tickets = self._l3_tickets
+        if self._hide_done_l3:
+            tickets = [ticket for ticket in tickets if not _ticket_is_done(ticket.status)]
+        return _sort_tickets_done_last(tickets)
+
+    def _done_l3_keys(self) -> set[str]:
+        return {ticket.key for ticket in self._l3_tickets if _ticket_is_done(ticket.status)}
+
+    def _support_links_to_done_l3(self, support_key: str) -> bool:
+        linked_l3 = self._support_linked_l3.get(support_key, set())
+        if not linked_l3:
+            return False
+        return bool(linked_l3 & self._done_l3_keys())
+
+    def _visible_support_tickets(self) -> list[JiraTicket]:
+        tickets = self._support_tickets
+        if self._hide_done_support:
+            tickets = [
+                ticket
+                for ticket in tickets
+                if not self._support_links_to_done_l3(ticket.key)
+            ]
+        return tickets
+
     def _render_tickets(self) -> None:
         if self._content_box is None:
             return
         visible = [ticket for ticket in self._tickets if ticket.status not in self._hidden_statuses]
         rows = [_create_ticket_row(ticket) for ticket in visible]
         self._show_rows_in(self._content_box, rows, empty_message="No tickets found.")
+        if len(self._scrolled_lists) > 0:
+            self._apply_tab_list_height(self._scrolled_lists[0], len(rows))
+            self._after_list_resize()
 
     def _render_l3_tickets(self) -> None:
         if self._l3_content_box is None:
             return
-        rows = [_create_ticket_row(ticket) for ticket in self._l3_tickets]
+        visible = self._visible_l3_tickets()
+        rows = [_create_ticket_row(ticket) for ticket in visible]
         self._show_rows_in(self._l3_content_box, rows, empty_message="No L3 tickets found.")
+        if len(self._scrolled_lists) > 1:
+            self._apply_tab_list_height(self._scrolled_lists[1], len(rows))
+            self._after_list_resize()
 
     def _render_support_tickets(self) -> None:
         if self._support_content_box is None:
             return
-        rows = [_create_ticket_row(ticket) for ticket in self._support_tickets]
+        visible = self._visible_support_tickets()
+        rows = [_create_ticket_row(ticket) for ticket in visible]
         self._show_rows_in(
             self._support_content_box,
             rows,
             empty_message="No Support tickets found.",
         )
+        if len(self._scrolled_lists) > 2:
+            self._apply_tab_list_height(self._scrolled_lists[2], len(rows))
+            self._after_list_resize()
 
     def _on_window_destroy(self, window: Gtk.Window) -> None:
         self._filters_box = None
         self._l3_content_box = None
         self._support_content_box = None
+        self._l3_done_checkbox = None
+        self._support_done_checkbox = None
+        self._scrolled_lists = []
         self._tickets = []
         self._l3_tickets = []
         self._support_tickets = []
+        self._support_linked_l3 = {}
         self._hidden_statuses.clear()
+        self._hide_done_l3 = False
+        self._hide_done_support = False
         super()._on_window_destroy(window)
 
 
@@ -951,12 +1136,25 @@ def _on_ticket_key_button_press(_widget: Gtk.Widget, event: Gdk.EventButton) -> 
     return False
 
 
+def _ticket_is_done(status: str) -> bool:
+    normalized = status.strip().lower()
+    return normalized in {"done", "closed", "resolved", "complete", "completed"}
+
+
+def _sort_tickets_done_last(tickets: list[JiraTicket]) -> list[JiraTicket]:
+    active = [ticket for ticket in tickets if not _ticket_is_done(ticket.status)]
+    done = [ticket for ticket in tickets if _ticket_is_done(ticket.status)]
+    return active + done
+
+
 def _status_css_class(status: str) -> str:
     normalized = status.strip().lower()
     if normalized == "acceptance":
         return "jira-status-acceptance"
     if normalized == "waiting for release":
         return "jira-status-waiting-for-release"
+    if normalized == "waiting for level 3":
+        return "jira-status-waiting-for-level-3"
     if normalized in {"done", "closed", "resolved", "complete", "completed"}:
         return "jira-status-done"
     if normalized in {"in progress", "in development", "working"}:
