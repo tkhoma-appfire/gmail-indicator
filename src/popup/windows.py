@@ -21,10 +21,13 @@ TOP_POPUP_GAP = 2
 POPUP_WIDTH = 380
 JIRA_POPUP_WIDTH = 520
 POPUP_MAX_HEIGHT = 320
+CALENDAR_LIST_MAX_HEIGHT = 320
+CALENDAR_LIST_MAX_HEIGHT_MULTI = 560
+CALENDAR_EVENT_ROW_HEIGHT = 62
 
 L3_TICKETS_JQL = (
     'cf[10900] = "L3 Support" AND assignee = currentUser() '
-    "AND sprint in openSprints() AND statusCategory != Done ORDER BY statusCategory DESC"
+    "AND sprint in openSprints() ORDER BY statusCategory DESC"
 )
 
 def _build_support_jql(l3_issue_keys: list[str]) -> str | None:
@@ -174,6 +177,7 @@ class _PopupBase(ABC):
         self._monitor: Gdk.Monitor | None = None
         self._monitor_geometry: Gdk.Rectangle | None = None
         self._content_box: Gtk.Box | None = None
+        self._scrolled_list: Gtk.ScrolledWindow | None = None
         self._title_label: Gtk.Label | None = None
         self._popup_anchor: tuple[int, int] | None = None
         self._popup_below_click = True
@@ -198,6 +202,20 @@ class _PopupBase(ABC):
 
     def _popup_width(self) -> int:
         return POPUP_WIDTH
+
+    def _max_list_content_height(self, row_count: int) -> int:
+        return POPUP_MAX_HEIGHT
+
+    def _apply_list_height(self, row_count: int) -> None:
+        if self._scrolled_list is None:
+            return
+        self._scrolled_list.set_max_content_height(
+            self._max_list_content_height(row_count),
+        )
+        if self._card is not None:
+            self._card.queue_resize()
+        if self._window is not None:
+            GLib.idle_add(self._reposition_popup)
 
     def toggle(
         self,
@@ -336,6 +354,7 @@ class _PopupBase(ABC):
         outer.pack_start(separator, False, False, 0)
 
         scrolled, content_box = self._create_scrolled_list()
+        self._scrolled_list = scrolled
         self._content_box = content_box
         outer.pack_start(scrolled, True, True, 0)
 
@@ -601,6 +620,44 @@ class CalendarPopup(_PopupBase):
     def _loading_message(self) -> str:
         return "Loading calendar…"
 
+    def _pack_main_content(self, outer: Gtk.Box) -> None:
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        separator.get_style_context().add_class("popup-separator")
+        outer.pack_start(separator, False, False, 0)
+
+        scrolled, content_box = self._create_scrolled_list()
+        self._scrolled_list = scrolled
+        self._content_box = content_box
+        # Do not expand: card height should follow the event list, not the overlay.
+        outer.pack_start(scrolled, False, False, 0)
+
+    def _list_viewport_height(self, row_count: int) -> int:
+        spacing = 8
+        padding = 16
+        return min(
+            CALENDAR_LIST_MAX_HEIGHT_MULTI,
+            padding
+            + row_count * CALENDAR_EVENT_ROW_HEIGHT
+            + max(0, row_count - 1) * spacing,
+        )
+
+    def _apply_list_height(self, row_count: int) -> None:
+        if self._scrolled_list is None:
+            return
+        if row_count <= 1:
+            self._scrolled_list.set_min_content_height(-1)
+            self._scrolled_list.set_max_content_height(CALENDAR_LIST_MAX_HEIGHT)
+        else:
+            height = self._list_viewport_height(row_count)
+            self._scrolled_list.set_min_content_height(height)
+            self._scrolled_list.set_max_content_height(height)
+        self._scrolled_list.queue_resize()
+        if self._card is not None:
+            self._card.queue_resize()
+        if self._window is not None:
+            self._window.queue_resize()
+            GLib.idle_add(self._reposition_popup)
+
     def _fetch_content(self) -> None:
         try:
             cached = self._calendar_client.get_cached_events()
@@ -626,6 +683,8 @@ class CalendarPopup(_PopupBase):
 
         rows = [_create_event_row(event) for event in events]
         self._show_rows(rows, empty_message="No events today.")
+        if rows:
+            self._apply_list_height(len(rows))
         return False
 
 
