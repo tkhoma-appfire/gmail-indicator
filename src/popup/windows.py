@@ -354,7 +354,7 @@ class _PopupBase(ABC):
         GLib.idle_add(self._place_shell_on_monitor)
         GLib.idle_add(self._reposition_popup)
         GLib.idle_add(self._reposition_popup)
-        GLib.idle_add(self._grab_keyboard)
+        GLib.idle_add(self._focus_popup)
         threading.Thread(target=self._fetch_content, daemon=True).start()
 
     def _build_header(self) -> Gtk.Widget:
@@ -629,37 +629,14 @@ class _PopupBase(ABC):
         monitor_num = screen.get_primary_monitor()
         return screen.get_monitor_geometry(monitor_num)
 
-    def _grab_keyboard(self) -> bool:
-        focus_widget = self._catcher or self._window
-        if focus_widget is None:
-            return False
-
-        focus_widget.grab_focus()
-        gdk_window = focus_widget.get_window()
-        display = Gdk.Display.get_default()
-        if gdk_window is not None and display is not None and hasattr(display, "get_default_seat"):
-            seat = display.get_default_seat()
-            if seat is not None and hasattr(seat, "grab"):
-                seat.grab(
-                    gdk_window,
-                    Gdk.SeatCapabilities.KEYBOARD,
-                    False,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
+    def _focus_popup(self) -> bool:
+        """Focus the popup without a seat keyboard grab (avoids GNOME shortcut-inhibit prompts)."""
+        focus_widget = self._window or self._catcher
+        if focus_widget is not None:
+            focus_widget.grab_focus()
         return False
 
-    def _release_keyboard(self) -> None:
-        display = Gdk.Display.get_default()
-        if display is not None and hasattr(display, "get_default_seat"):
-            seat = display.get_default_seat()
-            if seat is not None and hasattr(seat, "ungrab"):
-                seat.ungrab()
-
     def _on_window_destroy(self, _window: Gtk.Window) -> None:
-        self._release_keyboard()
         self._window = None
         self._fixed = None
         self._card = None
